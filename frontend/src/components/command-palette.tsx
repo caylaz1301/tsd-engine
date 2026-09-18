@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { CornerDownLeft, Loader2, Search } from "lucide-react"
 import { search, type SearchRow } from "@/lib/api"
@@ -25,6 +26,7 @@ export function CommandPalette() {
 	const [active, setActive] = useState(0)
 
 	const inputRef = useRef<HTMLInputElement>(null)
+	const triggerRef = useRef<HTMLButtonElement>(null)
 	const seq = useRef(0)
 
 	// Cmd+K / Ctrl+K membuka, Escape menutup.
@@ -42,8 +44,14 @@ export function CommandPalette() {
 
 	useEffect(() => {
 		if (open) {
+			const trigger = triggerRef.current
+			document.body.style.overflow = "hidden"
 			const t = setTimeout(() => inputRef.current?.focus(), 20)
-			return () => clearTimeout(t)
+			return () => {
+				clearTimeout(t)
+				document.body.style.overflow = ""
+				trigger?.focus()
+			}
 		}
 	}, [open])
 
@@ -81,9 +89,11 @@ export function CommandPalette() {
 
 	const go = useCallback(
 		(row: SearchRow | undefined) => {
+			const href = row
+				? `/sp/${encodeURIComponent(row.sp_name)}`
+				: `/search?q=${encodeURIComponent(q.trim())}`
+			router.push(href)
 			setOpen(false)
-			if (row) router.push(`/sp/${encodeURIComponent(row.sp_name)}`)
-			else if (q.trim()) router.push(`/search?q=${encodeURIComponent(q.trim())}`)
 		},
 		[q, router],
 	)
@@ -104,20 +114,22 @@ export function CommandPalette() {
 	return (
 		<>
 			<button
+				ref={triggerRef}
 				type="button"
 				onClick={() => setOpen(true)}
-				className="flex h-8 min-w-[220px] items-center gap-2 border border-zinc-300 bg-white px-2.5 text-left text-zinc-600 hover:border-zinc-400 hover:text-zinc-900"
+				aria-label="Buka pencarian"
+				className="flex size-10 items-center gap-2 border border-zinc-300 bg-white px-3 text-left text-zinc-700 hover:border-zinc-400 hover:bg-zinc-50 hover:text-zinc-950 sm:h-10 sm:w-[240px]"
 			>
 				<Search className="size-3.5" aria-hidden />
 				<span className="hidden flex-1 sm:inline">Cari stored procedure</span>
-				<kbd className="hidden border border-zinc-200 bg-zinc-50 px-1 font-mono text-[10px] text-zinc-500 sm:inline">
+				<kbd className="hidden border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-xs text-zinc-600 sm:inline">
 					⌘K
 				</kbd>
 			</button>
 
 			{open ? (
 				<div
-					className="command-palette-overlay fixed inset-0 z-50 flex items-start justify-center bg-white/45 px-4 pt-20"
+					className="command-palette-overlay fixed inset-0 z-50 flex items-start justify-center bg-white/60 px-3 pt-16 sm:px-4 sm:pt-20"
 					onMouseDown={() => setOpen(false)}
 					role="presentation"
 				>
@@ -128,7 +140,7 @@ export function CommandPalette() {
 						aria-modal="true"
 						aria-label="Cari stored procedure"
 					>
-						<div className="command-palette-input-row flex h-12 items-center gap-2 border-b border-zinc-200 px-3">
+						<div className="command-palette-input-row flex h-14 items-center gap-3 border-b border-zinc-200 px-4">
 							{loading ? (
 								<Loader2
 									className="size-4 shrink-0 animate-spin text-zinc-500"
@@ -152,8 +164,9 @@ export function CommandPalette() {
 								)}
 								spellCheck={false}
 								autoComplete="off"
+								aria-label="Cari stored procedure, tabel, atau segment"
 							/>
-							<kbd className="shrink-0 border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500">
+							<kbd className="shrink-0 border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-xs text-zinc-600">
 								esc
 							</kbd>
 						</div>
@@ -167,7 +180,7 @@ export function CommandPalette() {
 										Ketik minimal dua karakter untuk mencari SP, tabel, atau
 										segment.
 									</p>
-									<p className="mt-1 text-xs text-zinc-500">
+									<p className="mt-1 text-sm text-zinc-600">
 										Salinan arsip disembunyikan dari hasil cepat.
 									</p>
 								</div>
@@ -180,20 +193,20 @@ export function CommandPalette() {
 								<ul>
 									{rows.map((r, i) => (
 										<li key={r.sp_key}>
-											<button
-												type="button"
+											<Link
+												href={`/sp/${encodeURIComponent(r.sp_name)}`}
 												onMouseEnter={() => setActive(i)}
-												onClick={() => go(r)}
+												onClick={() => setOpen(false)}
 												className={cn(
-													"flex w-full items-center gap-3 border-b border-zinc-100 px-3 py-2.5 text-left hover:bg-zinc-50",
+											"flex min-h-14 w-full items-center gap-3 border-b border-zinc-100 px-4 py-3 text-left hover:bg-zinc-50",
 													i === active && "bg-zinc-100",
 												)}
 											>
 												<span className="min-w-0 flex-1">
-													<span className="block truncate font-mono text-[13px] text-zinc-900">
+											<span className="block truncate font-mono text-sm font-medium text-zinc-950">
 														{r.sp_name}
 													</span>
-													<span className="mt-0.5 block truncate text-xs text-zinc-600">
+											<span className="mt-0.5 block truncate text-sm text-zinc-600">
 														{r.segment ?? r.sql_database ?? "tanpa segment"}
 														{r.body_lines ? ` · ${r.body_lines} baris` : ""}
 													</span>
@@ -205,27 +218,27 @@ export function CommandPalette() {
 														aria-hidden
 													/>
 												) : null}
-											</button>
+											</Link>
 										</li>
 									))}
 								</ul>
 							)}
 						</div>
 
-						<div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] text-zinc-600">
+						<div className="flex min-h-11 items-center justify-between border-t border-zinc-200 bg-zinc-50 px-4 py-2 text-xs text-zinc-600">
 							<span>
 								{total > rows.length
 									? `Menampilkan ${rows.length} dari ${total} hasil`
 									: "↑↓ pilih · ↵ buka"}
 							</span>
 							{q.trim() ? (
-								<button
-									type="button"
-									onClick={() => go(undefined)}
+								<Link
+									href={`/search?q=${encodeURIComponent(q.trim())}`}
+									onClick={() => setOpen(false)}
 									className="font-medium text-zinc-800 hover:underline"
 								>
 									Lihat semua hasil
-								</button>
+								</Link>
 							) : null}
 						</div>
 					</div>

@@ -23,21 +23,21 @@ function SpList({ rows }: { rows: Row[] }) {
 		return <p className="text-zinc-500">Tidak ada.</p>
 	}
 	return (
-		<ul className="divide-y divide-zinc-100 border-y border-zinc-100">
+		<ul className="divide-y divide-zinc-100 border-y border-zinc-200 bg-white">
 			{rows.map((r) => (
 				<li
 					key={`${r.sp_name}-${r.operations ?? ""}`}
-					className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2"
+					className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 hover:bg-zinc-50"
 				>
 					<Link
 						href={`/sp/${encodeURIComponent(r.sp_name)}`}
-						className="min-w-0 font-mono text-[13px] break-all text-zinc-900 hover:text-accent hover:underline"
+						className="min-w-0 font-mono text-sm font-semibold break-all text-zinc-950 hover:text-accent hover:underline"
 					>
 						{r.sp_name}
 					</Link>
 					<StatusBadge status={r.status} />
 					{r.segment ? (
-						<Mono className="text-xs text-zinc-500">{r.segment}</Mono>
+						<Mono className="text-zinc-600">{r.segment}</Mono>
 					) : null}
 					{r.operations ? (
 						<span className="ml-auto flex shrink-0 gap-1">
@@ -47,7 +47,7 @@ function SpList({ rows }: { rows: Row[] }) {
 								.map((o) => (
 									<span
 										key={o}
-										className="rounded border border-zinc-200 px-1 text-[10px] tracking-wide text-zinc-600 uppercase"
+									className="rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-xs font-medium text-zinc-600 uppercase"
 									>
 										{o}
 									</span>
@@ -62,11 +62,14 @@ function SpList({ rows }: { rows: Row[] }) {
 
 export default async function TablePage({
 	params,
+	searchParams,
 }: {
 	// Next 16 mengirim params sebagai Promise.
 	params: Promise<{ name: string }>
+	searchParams: Promise<{ show?: string }>
 }) {
 	const { name } = await params
+	const query = await searchParams
 	const decoded = decodeURIComponent(name)
 
 	let lineage: TableLineage
@@ -81,9 +84,14 @@ export default async function TablePage({
 		)
 	}
 
-	const { prefix, name: shortName } = splitTableName(lineage.table_name)
+	const { prefix, name: shortName } = splitTableName(lineage.table)
 	const empty =
 		lineage.readers.length === 0 && lineage.writers.length === 0
+	const showAll = query.show === "all"
+	const limit = 100
+	const visibleWriters = showAll ? lineage.writers : lineage.writers.slice(0, limit)
+	const visibleReaders = showAll ? lineage.readers : lineage.readers.slice(0, limit)
+	const truncated = lineage.writers.length > limit || lineage.readers.length > limit
 
 	return (
 		<div className="flex flex-col gap-6">
@@ -98,7 +106,7 @@ export default async function TablePage({
 					{num(lineage.writers.length)} prosedur menulis ·{" "}
 					{num(lineage.readers.length)} prosedur membaca
 				</p>
-				<p className="mt-1 text-xs text-zinc-500">
+				<p className="mt-1 max-w-[72ch] text-sm text-zinc-600">
 					Nama tabel dicatat apa adanya dari kode, jadi satu tabel fisik bisa
 					muncul dengan beberapa penulisan berbeda.
 				</p>
@@ -111,19 +119,35 @@ export default async function TablePage({
 				/>
 			) : (
 				<>
-					<section>
-						<SectionHeading hint="insert, update, delete, merge, truncate">
+					<section className="min-w-0">
+						<SectionHeading hint={`${num(lineage.writers.length)} prosedur · insert, update, delete, merge, truncate`}>
 							Menulis ke tabel ini
 						</SectionHeading>
-						<SpList rows={lineage.writers} />
+						<SpList rows={visibleWriters} />
 					</section>
 
-					<section>
-						<SectionHeading hint="select, join, using">
+					<section className="min-w-0">
+						<SectionHeading hint={`${num(lineage.readers.length)} prosedur · select, join, using`}>
 							Membaca dari tabel ini
 						</SectionHeading>
-						<SpList rows={lineage.readers} />
+						<SpList rows={visibleReaders} />
 					</section>
+
+					{truncated ? (
+						<div className="border border-zinc-200 bg-white px-4 py-3">
+							<p className="text-sm text-zinc-700">
+								{showAll
+									? "Semua prosedur sedang ditampilkan."
+									: `Demi menjaga halaman tetap ringan, setiap daftar dibatasi ${num(limit)} prosedur pertama.`}
+							</p>
+							<Link
+								href={showAll ? `/tables/${encodeURIComponent(decoded)}` : `?show=all`}
+								className="mt-2 inline-flex min-h-10 items-center font-medium text-accent hover:underline"
+							>
+								{showAll ? "Kembali ke tampilan ringkas" : "Tampilkan semua prosedur"}
+							</Link>
+						</div>
+					) : null}
 				</>
 			)}
 		</div>

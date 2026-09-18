@@ -30,7 +30,7 @@ export function DiagramViewer({
 
 	if (images.length === 0) {
 		return (
-			<div className="border border-dashed border-zinc-300 px-4 py-10 text-center text-zinc-500">
+			<div className="border border-dashed border-zinc-300 bg-white px-4 py-10 text-center text-zinc-600">
 				Tidak ada diagram yang terdeteksi untuk prosedur ini di dokumen TSD.
 			</div>
 		)
@@ -47,21 +47,23 @@ export function DiagramViewer({
 		.filter((line, i) => !(i === 0 && /^Penjelasan\b/i.test(line)))
 
 	return (
-		<div className="border border-zinc-200 bg-white">
+		<div className="min-w-0 max-w-full border border-zinc-200 bg-white">
 			<div className="border-b border-zinc-200 bg-zinc-50/70">
-				<div className="thin-scroll flex gap-1 overflow-x-auto px-2 pt-2 pb-1">
+				<div className="thin-scroll flex max-w-full gap-1 overflow-x-auto px-2 pt-2 pb-1" role="tablist" aria-label="Pilih diagram">
 					{images.map((im, i) => {
 						const repeatedKind = images.filter((x) => x.kind === im.kind).length > 1
 						return (
 							<button
 								key={`${im.segment ?? "-"}-${im.kind}-${im.seq}`}
 								type="button"
+								role="tab"
+								aria-selected={i === idx}
 								onClick={() => {
 									setIdx(i)
 									setZoom(1)
 								}}
 								className={cn(
-									"flex max-w-[320px] shrink-0 items-center gap-1.5 border px-2.5 py-1 text-left text-xs",
+									"flex min-h-11 max-w-[340px] shrink-0 items-center gap-2 border px-3 py-2 text-left text-sm",
 									i === idx
 										? "border-zinc-400 bg-white text-zinc-900"
 										: "border-transparent text-zinc-600 hover:border-zinc-300 hover:bg-white hover:text-zinc-900",
@@ -71,7 +73,7 @@ export function DiagramViewer({
 									{KIND_LABEL[im.kind] ?? im.kind}
 								</span>
 								{repeatedKind || im.segment ? (
-									<span className="truncate font-mono text-[11px] text-zinc-500">
+									<span className="truncate font-mono text-xs text-zinc-600">
 										{im.segment ?? `#${im.seq}`}
 									</span>
 								) : null}
@@ -80,42 +82,44 @@ export function DiagramViewer({
 					})}
 				</div>
 
-				<div className="flex items-center justify-end gap-1 px-2 pb-2">
+				<div className="flex items-center justify-end gap-1.5 px-2 pb-2">
 					<button
 						type="button"
 						aria-label="Perkecil"
 						onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))}
-						className="border border-zinc-300 bg-white p-1 text-zinc-600 hover:text-zinc-900"
+						disabled={zoom <= 0.5}
+						className="flex size-9 items-center justify-center border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40"
 					>
-						<Minus className="size-3" aria-hidden />
+					<Minus className="size-4" aria-hidden />
 					</button>
-					<span className="w-12 text-center font-mono text-[11px] text-zinc-500 tabular-nums">
+					<span className="w-14 text-center font-mono text-xs text-zinc-600 tabular-nums">
 						{Math.round(zoom * 100)}%
 					</span>
 					<button
 						type="button"
 						aria-label="Perbesar"
 						onClick={() => setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))}
-						className="border border-zinc-300 bg-white p-1 text-zinc-600 hover:text-zinc-900"
+						disabled={zoom >= 4}
+						className="flex size-9 items-center justify-center border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-40"
 					>
-						<Plus className="size-3" aria-hidden />
+					<Plus className="size-4" aria-hidden />
 					</button>
 					<button
 						type="button"
 						aria-label="Kembalikan ukuran"
 						onClick={() => setZoom(1)}
-						className="border border-zinc-300 bg-white p-1 text-zinc-600 hover:text-zinc-900"
+						className="flex size-9 items-center justify-center border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
 					>
-						<RotateCcw className="size-3" aria-hidden />
+					<RotateCcw className="size-4" aria-hidden />
 					</button>
 					<a
 						href={src}
 						target="_blank"
 						rel="noreferrer"
 						aria-label="Buka gambar di tab baru"
-						className="border border-zinc-300 bg-white p-1 text-zinc-600 hover:text-zinc-900"
+					className="flex size-9 items-center justify-center border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950"
 					>
-						<ExternalLink className="size-3" aria-hidden />
+					<ExternalLink className="size-4" aria-hidden />
 					</a>
 				</div>
 			</div>
@@ -130,7 +134,7 @@ export function DiagramViewer({
 				/>
 			</div>
 
-			<div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-zinc-200 bg-zinc-50/70 px-3 py-2 text-[11px] text-zinc-500">
+			<div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-zinc-200 bg-zinc-50/70 px-3 py-2 text-xs text-zinc-600">
 				<span>
 					Sumber:{" "}
 					<span className="font-mono">{current.segment ?? "tidak tercatat"}</span>
@@ -148,13 +152,13 @@ export function DiagramViewer({
 					<h3 className="text-sm font-semibold text-zinc-950">
 						Penjelasan {KIND_LABEL[current.kind] ?? current.kind}
 					</h3>
-					<span className="text-xs text-zinc-500">
+					<span className="text-sm text-zinc-600">
 						Dikutip dari dokumen TSD yang dipilih
 					</span>
 				</div>
 
 				{lines.length > 0 ? (
-					<div className="max-w-[72ch] space-y-3 text-[14px] leading-7 text-zinc-700">
+					<div className="max-w-[72ch] space-y-3 text-[15px] leading-7 text-zinc-700 [overflow-wrap:anywhere]">
 						{lines.map((line, i) => {
 							const isStep = /^(Langkah\b|Step\b|\d+[.)]\s|Penjelasan Proses\b|Tabel (Sumber|Referensi|Tujuan)\b)/i.test(line)
 							const labelled = line.match(/^([^:]{2,36}):\s*(.+)$/)

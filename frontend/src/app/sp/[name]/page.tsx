@@ -8,6 +8,7 @@ import {
 } from "@/lib/api"
 import { num } from "@/lib/utils"
 import { DiagramViewer } from "@/components/diagram-viewer"
+import { SpAnalysis } from "@/components/sp-analysis"
 import {
 	ErrorPanel,
 	KeyValue,
@@ -68,40 +69,30 @@ export default async function SpPage({
 				</div>
 
 				{multiDoc ? (
-					<div className="mt-4 border border-amber-200 bg-amber-50/70 px-4 py-3">
-						<p className="font-medium text-amber-950">
-							Perlu ditinjau di {sp.occurrences.length} dokumen TSD.
-						</p>
-						<p className="mt-1 max-w-3xl text-sm text-amber-900">
-							Prosedur ini muncul di lebih dari satu dokumen. Perubahan logika
-							perlu dicocokkan ke semua dokumen karena diagram dan uraian bisa
-							berbeda antar-segment.
-						</p>
-					</div>
+					<p className="mt-3 text-sm text-zinc-600">
+						Tersedia pada <span className="font-mono text-zinc-900">{sp.occurrences.length}</span> dokumen TSD.
+					</p>
 				) : null}
 			</div>
 
-			<div className="grid gap-8 lg:grid-cols-[280px_minmax(0,1fr)]">
+			<SpAnalysis name={sp.sp_name} />
+
+			<div className="grid gap-8 lg:grid-cols-[340px_minmax(0,1fr)]">
 				{/* ---------------------------------------------- rail metadata */}
-				<aside className="flex flex-col gap-6 lg:border-r lg:border-zinc-200 lg:pr-6">
+				<aside className="grid min-w-0 gap-6 sm:grid-cols-2 lg:flex lg:flex-col lg:border-r lg:border-zinc-200 lg:pr-6">
 					<div>
 						<SectionHeading>Lokasi kode</SectionHeading>
 						<dl className="divide-y divide-zinc-100">
 							<KeyValue label="Database">
 								{sp.sql_database ? (
-									<Mono>{sp.sql_database}</Mono>
+									<Mono title={sp.sql_database}>{sp.sql_database}</Mono>
 								) : (
 									<span className="text-amber-700">tidak ditemukan di skrip</span>
 								)}
 							</KeyValue>
 							{sp.sql_file ? (
 								<KeyValue label="Berkas">
-									<Mono className="break-all text-xs">{sp.sql_file}</Mono>
-									{sp.sql_line ? (
-										<span className="ml-1 font-mono text-xs text-zinc-500 tabular-nums">
-											:{num(sp.sql_line)}
-										</span>
-									) : null}
+									<span className="flex min-w-0" title={`${sp.sql_file}${sp.sql_line ? `:${sp.sql_line}` : ""}`}><Mono className="min-w-0 truncate">{sp.sql_file}</Mono>{sp.sql_line ? <span className="shrink-0 font-mono text-sm text-zinc-600 tabular-nums">:{num(sp.sql_line)}</span> : null}</span>
 								</KeyValue>
 							) : null}
 							<KeyValue label="Panjang">
@@ -115,9 +106,9 @@ export default async function SpPage({
 								) : (
 									<ul className="flex flex-col gap-0.5">
 										{parameters.map((p) => (
-											<li key={p.name}>
-												<Mono className="text-xs">{p.name}</Mono>{" "}
-												<span className="text-xs text-zinc-500 uppercase">
+										<li key={p.name} className="truncate" title={`${p.name} ${p.type}`}>
+												<Mono>{p.name}</Mono>{" "}
+												<span className="text-xs font-medium text-zinc-600 uppercase">
 													{p.type}
 												</span>
 											</li>
@@ -139,20 +130,21 @@ export default async function SpPage({
 								{sp.occurrences.map((o) => (
 									<li key={`${o.segment}-${o.tsd_filename}`}>
 										<Link
-											href={`/search?q=${encodeURIComponent(o.segment)}&segment=${encodeURIComponent(o.segment)}`}
+											href={`/documents/${encodeURIComponent(o.tsd_filename)}`}
 											className="flex items-start gap-1.5 hover:text-accent"
+											title={`Buka ${o.tsd_filename}`}
 										>
 											<Layers
 												className="mt-0.5 size-3.5 shrink-0 text-zinc-400"
 												aria-hidden
 											/>
-											<Mono className="text-xs break-all">{o.segment}</Mono>
+											<Mono className="block min-w-0 truncate">{o.segment}</Mono>
 										</Link>
-										<p className="mt-0.5 pl-5 text-xs break-all text-zinc-500">
+									<p className="mt-1 truncate pl-5 text-sm text-zinc-600" title={o.tsd_filename}>
 											{o.tsd_filename}
 										</p>
 										{o.section_model ? (
-											<p className="pl-5 font-mono text-[11px] text-zinc-400">
+										<p className="mt-0.5 pl-5 font-mono text-xs text-zinc-500">
 												{o.section_model.split(" – ")[0]}
 												{o.heading_level ? ` · heading ${o.heading_level}` : ""}
 											</p>
@@ -161,21 +153,7 @@ export default async function SpPage({
 								))}
 							</ul>
 						)}
-						{sp.sharepoint_url ? (
-							<a
-								href={sp.sharepoint_url}
-								target="_blank"
-								rel="noreferrer"
-								className="mt-3 inline-flex items-center gap-1.5 border border-zinc-300 px-2.5 py-1.5 text-xs hover:border-zinc-400"
-							>
-								<FileText className="size-3.5" aria-hidden />
-								Buka berkas TSD
-							</a>
-						) : (
-							<p className="mt-3 text-xs text-zinc-400">
-								Tautan SharePoint belum tersedia.
-							</p>
-						)}
+							{sp.document ? <Link href={`/documents/${encodeURIComponent(sp.document.tsd_filename)}`} className="mt-3 inline-flex min-h-10 items-center gap-2 border border-zinc-300 bg-white px-3 py-2 text-sm font-medium hover:border-zinc-400 hover:bg-zinc-100"><FileText className="size-3.5" aria-hidden />Baca dokumen TSD</Link> : null}
 					</div>
 
 					{sp.called_by || sp.calls_documented.length > 0 ? (
@@ -187,7 +165,7 @@ export default async function SpPage({
 										href={`/sp/${encodeURIComponent(sp.called_by)}`}
 										className="hover:text-accent hover:underline"
 									>
-										<Mono className="text-xs break-all">{sp.called_by}</Mono>
+										<Mono className="block truncate" title={sp.called_by}>{sp.called_by}</Mono>
 									</Link>
 								</KeyValue>
 							) : null}
@@ -200,7 +178,7 @@ export default async function SpPage({
 													href={`/sp/${encodeURIComponent(c.sp_name)}`}
 													className="hover:text-accent hover:underline"
 												>
-													<Mono className="text-xs break-all">{c.sp_name}</Mono>
+												<Mono className="block truncate" title={c.sp_name}>{c.sp_name}</Mono>
 												</Link>
 											</li>
 										))}
@@ -223,11 +201,14 @@ export default async function SpPage({
 									>
 										<Link
 											href={`/sp/${encodeURIComponent(c.sp_name)}`}
-											className="min-w-0 hover:text-accent hover:underline"
+											className="min-w-0 flex-1 overflow-hidden hover:text-accent hover:underline"
 										>
-											<Mono className="text-[11px] break-all">{c.sp_name}</Mono>
+										<span className="group relative block min-w-0">
+											<Mono className="block truncate text-xs">{c.sp_name}</Mono>
+											<span role="tooltip" className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden max-w-80 border border-zinc-300 bg-zinc-950 px-2 py-1.5 font-mono text-xs break-all text-white shadow-sm group-hover:block group-focus-within:block">{c.sp_name}</span>
+										</span>
 										</Link>
-										<span className="shrink-0 font-mono text-[11px] text-zinc-400 tabular-nums">
+									<span className="shrink-0 font-mono text-xs text-zinc-500 tabular-nums">
 											{c.body_lines ? num(c.body_lines) : "–"}
 										</span>
 									</li>
@@ -255,8 +236,8 @@ export default async function SpPage({
 						/>
 					</section>
 
-					<section className="grid gap-6 sm:grid-cols-2">
-						<div>
+					<section className="grid min-w-0 grid-cols-1 gap-6 sm:grid-cols-2">
+						<div className="min-w-0">
 							<SectionHeading hint={`${sp.source_tables.length}`}>
 								Tabel sumber
 							</SectionHeading>
@@ -270,7 +251,7 @@ export default async function SpPage({
 								</div>
 							)}
 						</div>
-						<div>
+						<div className="min-w-0">
 							<SectionHeading hint={`${sp.target_tables.length}`}>
 								Tabel tujuan
 							</SectionHeading>

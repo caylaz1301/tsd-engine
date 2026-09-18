@@ -198,10 +198,10 @@ def _explanation(items) -> str:
 
 # --------------------------------------------------------------- inti M2
 
-def parse(path: Path, images_root: Path) -> dict:
+def parse(path: Path, images_root: Path, segment_override: str | None = None) -> dict:
     doc = Document(str(path))
     rels = doc.part.related_parts
-    segment = segment_from_filename(path.stem)
+    segment = segment_override or segment_from_filename(path.stem)
 
     sections = _sections(doc)
 
@@ -259,8 +259,12 @@ def parse(path: Path, images_root: Path) -> dict:
                     ]
                     tbl_name = None
                     if pending_name:
-                        tk = C.SP_TOKEN_RE.search(pending_name)
-                        tbl_name = tk.group(0) if tk else pending_name[:80]
+                        label_match = C.SPEC_TABLE_LABEL_RE.search(pending_name)
+                        if label_match:
+                            tbl_name = label_match.group("name")
+                        else:
+                            tk = C.SP_TOKEN_RE.search(pending_name)
+                            tbl_name = tk.group(0) if tk else pending_name[:80]
                     specs[spec_key].append({
                         "table_name": tbl_name,
                         "raw_label": pending_name,

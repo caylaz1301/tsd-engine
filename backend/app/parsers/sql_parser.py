@@ -282,7 +282,7 @@ def parse_batch(batch: str, offset_line: int):
         "sp_name": name,
         "sp_name_lower": name.lower(),
         "schema": schema,
-        "line": offset_line,
+        "line": offset_line + batch[:m.start()].count("\n"),
         "parameters": params,
         "param_count": len(params),
         "source_tables": sorted(sources.values(), key=str.lower),
@@ -305,7 +305,7 @@ def parse_file(path: Path) -> dict:
     for gm in GO_RE.finditer(text):
         chunk = text[pos:gm.start()]
         batches.append((chunk, line))
-        line += chunk.count("\n") + 1
+        line += text[pos:gm.end()].count("\n")
         pos = gm.end()
     batches.append((text[pos:], line))
 

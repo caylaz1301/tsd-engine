@@ -8,6 +8,8 @@ Dokumentasi interaktif tersedia di http://127.0.0.1:8000/docs
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,9 +20,14 @@ from app.db import index_db
 # Frontend Next.js berjalan di port terpisah saat pengembangan, jadi asalnya
 # harus diizinkan secara eksplisit. Daftar ini sengaja tidak memakai tanda
 # bintang supaya tidak terbawa ke lingkungan produksi.
-DEV_ORIGINS = [
+DEFAULT_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+]
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", ",".join(DEFAULT_ORIGINS)).split(",")
+    if origin.strip()
 ]
 
 app = FastAPI(
@@ -34,9 +41,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=DEV_ORIGINS,
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 

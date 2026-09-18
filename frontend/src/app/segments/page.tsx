@@ -1,7 +1,8 @@
-import Link from "next/link"
 import { getSegments, type SegmentSummary } from "@/lib/api"
-import { num } from "@/lib/utils"
-import { ErrorPanel, Mono, SectionHeading } from "@/components/ui"
+import { ErrorPanel } from "@/components/ui"
+import { DocumentUpload } from "@/components/document-upload"
+import { DocumentLibrary } from "@/components/document-library"
+import { Download } from "lucide-react"
 
 export const dynamic = "force-dynamic"
 
@@ -20,57 +21,21 @@ export default async function SegmentsPage() {
 
 	return (
 		<div className="flex flex-col gap-5">
-			<div>
-				<h1 className="text-lg font-semibold tracking-tight text-zinc-900">
-					Dokumen TSD
-				</h1>
-				<p className="mt-1 text-zinc-600">
-					Setiap dokumen mewakili satu segment pelaporan.
-				</p>
+			<div className="flex flex-col gap-3 border-b border-zinc-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
+				<div><h1 className="text-xl font-semibold tracking-tight text-zinc-900">Repository Dokumen TSD</h1>
+				<p className="mt-1 max-w-3xl text-zinc-600">
+					Periksa, baca, revisi, dan atur sumber pencarian dari satu tempat. Dokumen baru tidak memengaruhi indeks sebelum seluruh pemeriksaan lulus.
+				</p></div>
+				<div className="flex flex-wrap items-center gap-4 text-sm">
+					<a href="/templates/NTT_Data_Draft_TSD_Template.docx" download className="inline-flex min-h-10 items-center gap-2 border border-zinc-300 bg-white px-3 py-2 font-medium text-zinc-800 hover:border-zinc-400 hover:bg-zinc-100"><Download className="size-4" aria-hidden />Unduh template TSD</a>
+					<div><span className="block font-mono text-lg font-semibold text-zinc-950">{segments.filter((item) => item.status === "active").length}</span><span className="text-zinc-600">aktif</span></div>
+					<div><span className="block font-mono text-lg font-semibold text-zinc-950">{segments.filter((item) => item.status === "inactive").length}</span><span className="text-zinc-600">nonaktif</span></div>
+				</div>
 			</div>
 
-			<section>
-				<SectionHeading hint={`${segments.length} dokumen`}>
-					Terindeks
-				</SectionHeading>
-				<ul className="divide-y divide-zinc-100 border-y border-zinc-200">
-					{segments.map((s) => (
-						<li key={s.tsd_filename} className="py-3">
-							<Link
-								href={`/search?q=${encodeURIComponent(s.segment)}&segment=${encodeURIComponent(s.segment)}`}
-								className="font-mono text-[13px] font-medium break-all text-zinc-900 hover:text-accent hover:underline"
-							>
-								{s.segment}
-							</Link>
-							<div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-zinc-500">
-								<Mono className="text-xs break-all">{s.tsd_filename}</Mono>
-								{s.procedure_count !== null ? (
-									<span className="tabular-nums">
-										{num(s.procedure_count)} SP di dokumen
-									</span>
-								) : null}
-								{s.indexed_sp !== null ? (
-									<span className="tabular-nums">
-										{num(s.indexed_sp)} terindeks
-									</span>
-								) : null}
-								{s.sharepoint_url ? (
-									<a
-										href={s.sharepoint_url}
-										target="_blank"
-										rel="noreferrer"
-										className="text-accent hover:underline"
-									>
-										buka di SharePoint
-									</a>
-								) : (
-									<span className="text-zinc-400">tautan belum tersedia</span>
-								)}
-							</div>
-						</li>
-					))}
-				</ul>
-			</section>
+			<DocumentLibrary documents={segments} />
+
+			<DocumentUpload />
 		</div>
 	)
 }

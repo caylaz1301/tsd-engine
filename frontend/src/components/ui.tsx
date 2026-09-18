@@ -29,7 +29,7 @@ export function StatusBadge({
 	return (
 		<span
 			className={cn(
-				"inline-flex shrink-0 items-center rounded border px-1.5 py-px text-[11px] font-medium whitespace-nowrap",
+				"inline-flex shrink-0 items-center rounded border px-2 py-0.5 text-xs font-medium leading-4 whitespace-nowrap",
 				STATUS_STYLE[status],
 				className,
 			)}
@@ -41,7 +41,7 @@ export function StatusBadge({
 
 export function LowConfidenceBadge() {
 	return (
-		<span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-px text-[11px] font-medium text-amber-800">
+		<span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium leading-4 text-amber-900">
 			<AlertTriangle className="size-3" aria-hidden />
 			confidence rendah
 		</span>
@@ -53,12 +53,14 @@ export function LowConfidenceBadge() {
 export function Mono({
 	children,
 	className,
+	title,
 }: {
 	children: React.ReactNode
 	className?: string
+	title?: string
 }) {
 	return (
-		<span className={cn("font-mono text-[13px] tracking-tight", className)}>
+		<span className={cn("font-mono text-sm", className)} title={title} tabIndex={title ? 0 : undefined}>
 			{children}
 		</span>
 	)
@@ -74,11 +76,11 @@ export function SectionHeading({
 	hint?: string
 }) {
 	return (
-		<div className="mb-3 flex items-baseline justify-between gap-4 border-b border-zinc-200 pb-2">
-			<h2 className="text-xs font-semibold text-zinc-800">
+		<div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-zinc-200 pb-2">
+			<h2 className="text-sm font-semibold text-zinc-900">
 				{children}
 			</h2>
-			{hint ? <span className="text-xs text-zinc-500">{hint}</span> : null}
+			{hint ? <span className="text-sm text-zinc-600">{hint}</span> : null}
 		</div>
 	)
 }
@@ -93,8 +95,8 @@ export function KeyValue({
 	children: React.ReactNode
 }) {
 	return (
-		<div className="flex flex-col gap-0.5 py-1.5">
-			<dt className="text-[11px] tracking-wide text-zinc-500 uppercase">
+		<div className="flex flex-col gap-0.5 py-2">
+			<dt className="text-xs font-medium text-zinc-600">
 				{label}
 			</dt>
 			<dd className="text-zinc-900">{children}</dd>
@@ -116,8 +118,8 @@ export function Stat({
 	tone?: "default" | "warn" | "good"
 }) {
 	return (
-		<div className="border border-zinc-200 bg-white px-3 py-3">
-			<div className="text-[11px] font-medium text-zinc-500">
+		<div className="min-w-0 border border-zinc-200 bg-white px-4 py-4">
+			<div className="text-sm font-medium text-zinc-600">
 				{label}
 			</div>
 			<div
@@ -129,7 +131,7 @@ export function Stat({
 			>
 				{value}
 			</div>
-			{sub ? <div className="mt-2 text-xs leading-snug text-zinc-600">{sub}</div> : null}
+			{sub ? <div className="mt-2 text-sm leading-snug text-zinc-600">{sub}</div> : null}
 		</div>
 	)
 }
@@ -144,11 +146,11 @@ export function EmptyState({
 	description?: string
 }) {
 	return (
-		<div className="flex flex-col items-center gap-2 border border-dashed border-zinc-300 px-6 py-14 text-center">
+		<div className="flex flex-col items-center gap-2 border border-dashed border-zinc-300 bg-white px-6 py-14 text-center">
 			<SearchX className="size-5 text-zinc-400" aria-hidden />
 			<p className="font-medium text-zinc-800">{title}</p>
 			{description ? (
-				<p className="max-w-md text-zinc-500">{description}</p>
+				<p className="max-w-md text-zinc-600">{description}</p>
 			) : null}
 		</div>
 	)
@@ -170,12 +172,12 @@ export function ErrorPanel({
 				<div className="min-w-0">
 					<p className="font-medium text-red-900">{title}</p>
 					{detail ? (
-						<p className="mt-0.5 font-mono text-xs break-words text-red-800">
+						<p className="mt-0.5 font-mono text-sm break-words text-red-800">
 							{detail}
 						</p>
 					) : null}
 					{hint ? (
-						<div className="mt-2 text-xs text-red-800">{hint}</div>
+						<div className="mt-2 text-sm text-red-800">{hint}</div>
 					) : null}
 				</div>
 			</div>
@@ -212,7 +214,7 @@ export function TableChip({
 	return (
 		<Link
 			href={`/tables/${encodeURIComponent(name)}`}
-			className="group flex items-start gap-2 border-b border-zinc-100 py-1.5 hover:bg-zinc-50"
+			className="group flex min-h-11 items-start gap-2 border-b border-zinc-100 py-2.5 hover:bg-zinc-50"
 		>
 			<Database
 				className="mt-1 size-3.5 shrink-0 text-zinc-400"
@@ -228,7 +230,7 @@ export function TableChip({
 					{ops.map((o) => (
 						<span
 							key={o}
-							className="rounded border border-zinc-200 bg-white px-1 text-[10px] tracking-wide text-zinc-600 uppercase"
+							className="rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-xs font-medium text-zinc-600 uppercase"
 						>
 							{o}
 						</span>

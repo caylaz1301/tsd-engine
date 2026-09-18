@@ -39,6 +39,7 @@ DROP TABLE IF EXISTS sp_tables;
 DROP TABLE IF EXISTS spec_tables;
 DROP TABLE IF EXISTS spec_fields;
 DROP TABLE IF EXISTS documents;
+DROP TABLE IF EXISTS sql_sources;
 DROP TABLE IF EXISTS sp_fts;
 DROP TABLE IF EXISTS sp_doc_occurrences;
 
@@ -49,6 +50,13 @@ CREATE TABLE documents (
     procedure_count INTEGER,
     change_control  TEXT,
     warnings        TEXT,
+    indexed_at      TEXT
+);
+
+CREATE TABLE sql_sources (
+    sql_file        TEXT PRIMARY KEY,
+    sql_database    TEXT,
+    procedure_count INTEGER,
     indexed_at      TEXT
 );
 
@@ -199,6 +207,14 @@ def build() -> dict:
     con.executescript(SCHEMA)
 
     ts = now()
+
+    for source in sqls:
+        con.execute(
+            "INSERT INTO sql_sources VALUES (?,?,?,?)",
+            (source["file"], source.get("database"),
+             source.get("procedure_count", 0), ts),
+        )
+
     seen_doc_keys: set[str] = set()
     doc_rows: set[str] = set()
     stats = {"matched": 0, "doc_only": 0, "sql_only": 0, "sql_variant": 0,

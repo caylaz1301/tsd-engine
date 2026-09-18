@@ -12,11 +12,19 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
+from app.modules import infer_module
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 DB_PATH = BASE_DIR / "storage" / "tsd_index.db"
 IMAGES_DIR = BASE_DIR / "storage" / "images"
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+DOCUMENTED_TABLE_RE = re.compile(
+    r"(?im)^\s*(?:[^\w\n]+\s*)?tabel\s+"
+    r"(?P<role>proses|sementara|sumber|source|tujuan|target)"
+    r"(?:\s*\([^\n)]*\))?\s*$\s*"
+    r"(?P<table>(?:[A-Za-z_][\w$#]*\.){0,2}[A-Za-z_][\w$#]*)\s*(?:[-\u2013\u2014]|$)"
+)
 
 
 class IndexMissingError(RuntimeError):
@@ -31,6 +39,7 @@ def connect() -> sqlite3.Connection:
         )
     con = sqlite3.connect("file:%s?mode=ro" % DB_PATH, uri=True)
     con.row_factory = sqlite3.Row
+    con.create_function("infer_module", 3, infer_module, deterministic=True)
     return con
 
 
@@ -66,6 +75,7 @@ JOIN sp_index i ON i.sp_key = f.sp_key
 WHERE sp_fts MATCH :match
   AND (:status   IS NULL OR i.status  = :status)
   AND (:segment  IS NULL OR i.segment = :segment)
+  AND (:module   IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
   AND (:hide_variants = 0 OR i.variant IS NULL)
 ORDER BY (LOWER(i.sp_name) = LOWER(:raw)) DESC,
          (i.status = 'matched') DESC,
@@ -81,6 +91,30 @@ JOIN sp_index i ON i.sp_key = f.sp_key
 WHERE sp_fts MATCH :match
   AND (:status  IS NULL OR i.status  = :status)
   AND (:segment IS NULL OR i.segment = :segment)
+  AND (:module  IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
+  AND (:hide_variants = 0 OR i.variant IS NULL)
+"""
+
+BROWSE_SQL = """
+SELECT i.sp_key, i.sp_name, i.segment, i.tsd_filename, i.status,
+       i.confidence, i.variant, i.base_name, i.sql_database, i.sql_file,
+       i.body_lines, i.param_count, i.called_by,
+       (SELECT COUNT(*) FROM sp_images m WHERE m.sp_key = i.sp_key) AS image_count,
+       0.0 AS score
+FROM sp_index i
+WHERE (:status IS NULL OR i.status = :status)
+  AND (:segment IS NULL OR i.segment = :segment)
+  AND (:module IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
+  AND (:hide_variants = 0 OR i.variant IS NULL)
+ORDER BY (i.status = 'matched') DESC, i.sp_name
+LIMIT :limit OFFSET :offset
+"""
+
+BROWSE_COUNT_SQL = """
+SELECT COUNT(*) FROM sp_index i
+WHERE (:status IS NULL OR i.status = :status)
+  AND (:segment IS NULL OR i.segment = :segment)
+  AND (:module IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
   AND (:hide_variants = 0 OR i.variant IS NULL)
 """
 
@@ -89,27 +123,30 @@ def search(
     q: str,
     status: str | None = None,
     segment: str | None = None,
+    module: str | None = None,
     hide_variants: bool = False,
     limit: int = 20,
     offset: int = 0,
 ) -> dict[str, Any]:
     match = build_match_expression(q)
-    if match is None:
-        return {"total": 0, "results": [], "query": q}
-
     params = {
         "match": match,
         "raw": q.strip(),
         "status": status,
         "segment": segment,
+        "module": module,
         "hide_variants": 1 if hide_variants else 0,
         "limit": limit,
         "offset": offset,
     }
     con = connect()
     try:
-        total = con.execute(COUNT_SQL, params).fetchone()[0]
-        rows = rows_to_dicts(con.execute(SEARCH_SQL, params).fetchall())
+        total_sql = COUNT_SQL if match is not None else BROWSE_COUNT_SQL
+        rows_sql = SEARCH_SQL if match is not None else BROWSE_SQL
+        total = con.execute(total_sql, params).fetchone()[0]
+        rows = rows_to_dicts(con.execute(rows_sql, params).fetchall())
+        for row in rows:
+            row["module"] = infer_module(row.get("segment"), row.get("sql_database"), row.get("sp_name"))
     finally:
         con.close()
     return {"total": total, "results": rows, "query": q}
@@ -139,6 +176,12 @@ def get_sp(name: str) -> dict[str, Any] | None:
         ).fetchall())
         sp["source_tables"] = [t for t in tables if t["role"] == "source"]
         sp["target_tables"] = [t for t in tables if t["role"] == "target"]
+        if not sp["source_tables"] or not sp["target_tables"]:
+            documented = _documented_tables(sp.get("explanation") or "")
+            if not sp["source_tables"]:
+                sp["source_tables"] = documented["source"]
+            if not sp["target_tables"]:
+                sp["target_tables"] = documented["target"]
 
         # Semua TSD yang mendokumentasikan SP ini. Biasanya satu, tapi
         # sebagian SP dibahas di lebih dari satu dokumen.
@@ -175,6 +218,26 @@ def get_sp(name: str) -> dict[str, Any] | None:
         con.close()
 
 
+def _documented_tables(explanation: str) -> dict[str, list[dict[str, Any]]]:
+    """Ambil lineage hanya dari label tabel eksplisit pada narasi TSD."""
+    result: dict[str, list[dict[str, Any]]] = {"source": [], "target": []}
+    seen: set[tuple[str, str]] = set()
+    for match in DOCUMENTED_TABLE_RE.finditer(explanation):
+        label = match.group("role").lower()
+        role = "target" if label in {"tujuan", "target"} else "source"
+        table = match.group("table")
+        key = (role, table.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        result[role].append({
+            "role": role,
+            "table_name": table,
+            "operations": "terdokumentasi di TSD",
+        })
+    return result
+
+
 def stats() -> dict[str, Any]:
     con = connect()
     try:
@@ -197,7 +260,8 @@ def stats() -> dict[str, Any]:
             "SELECT COUNT(*) sp_total, "
             "(SELECT COUNT(*) FROM sp_images) images, "
             "(SELECT COUNT(*) FROM spec_fields) spec_fields, "
-            "(SELECT COUNT(*) FROM documents) documents "
+            "(SELECT COUNT(*) FROM documents) documents, "
+            "(SELECT COUNT(*) FROM sql_sources) sql_files "
             "FROM sp_index"
         ).fetchone()
         hot_tables = rows_to_dicts(con.execute(
@@ -209,12 +273,22 @@ def stats() -> dict[str, Any]:
             "WHERE status = 'sql_variant' "
             "GROUP BY LOWER(base_name) ORDER BY copies DESC LIMIT 15"
         ).fetchall())
+        module_stats: dict[str, dict[str, Any]] = {}
+        for row in con.execute("SELECT segment, sql_database, sp_name, status, variant FROM sp_index"):
+            if row["variant"]:
+                continue
+            module = infer_module(row["segment"], row["sql_database"], row["sp_name"])
+            item = module_stats.setdefault(module, {"module": module, "total": 0, "matched": 0, "sql_only": 0})
+            item["total"] += 1
+            if row["status"] == "matched": item["matched"] += 1
+            if row["status"] == "sql_only": item["sql_only"] += 1
         return {
             "by_status": by_status,
             "totals": dict(totals),
             "segments": segments,
             "hot_tables": hot_tables,
             "most_copied": most_copied,
+            "modules": sorted(module_stats.values(), key=lambda item: (-item["total"], item["module"])),
         }
     finally:
         con.close()
@@ -223,7 +297,7 @@ def stats() -> dict[str, Any]:
 def list_segments() -> list[dict[str, Any]]:
     con = connect()
     try:
-        return rows_to_dicts(con.execute(
+        rows = rows_to_dicts(con.execute(
             "SELECT d.tsd_filename, d.segment, d.procedure_count, "
             "d.sharepoint_url, "
             "(SELECT COUNT(*) FROM sp_index i "
@@ -231,6 +305,25 @@ def list_segments() -> list[dict[str, Any]]:
             "    AND i.status = 'matched') indexed_sp "
             "FROM documents d ORDER BY d.segment"
         ).fetchall())
+        for row in rows:
+            row["module"] = infer_module(row.get("segment"))
+            row["status"] = "active"
+        return rows
+    finally:
+        con.close()
+
+
+def list_modules() -> list[dict[str, Any]]:
+    con = connect()
+    try:
+        rows = con.execute(
+            "SELECT segment, sql_database, sp_name FROM sp_index WHERE variant IS NULL"
+        ).fetchall()
+        counts: dict[str, int] = {}
+        for row in rows:
+            module = infer_module(row["segment"], row["sql_database"], row["sp_name"])
+            counts[module] = counts.get(module, 0) + 1
+        return [{"module": key, "sp_count": value} for key, value in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
     finally:
         con.close()
 

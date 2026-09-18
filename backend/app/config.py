@@ -63,6 +63,10 @@ SPEC_SECTION_ALIASES = {
 }
 
 SPEC_TABLE_HEADER = ["field name", "data type", "description"]
+SPEC_TABLE_LABEL_RE = re.compile(
+    r"list\s+of\s+table\s+specification\s+(?P<name>[#A-Za-z_][A-Za-z0-9_.$#]*)\s*:?",
+    re.IGNORECASE,
+)
 CHANGE_CONTROL_HEADER_HINT = ["version", "date", "authors"]
 
 # Gambar lebih kecil dari ini dianggap logo/ikon, bukan diagram.
