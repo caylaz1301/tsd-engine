@@ -30,4 +30,17 @@ if [ ! -f /app/storage/.docker-initialized ]; then
   touch /app/storage/.docker-initialized
 fi
 
+# Indeks lama pada volume persisten belum memiliki status diagram per TSD.
+# Parse ulang sumber aktif satu kali setelah versi aplikasi ini terpasang.
+if [ ! -f /app/storage/.diagram-status-v1 ]; then
+  if [ -f /app/storage/.docker-initialized ] && \
+     find /app/samples -maxdepth 1 -type f -name '*.docx' | grep -q .; then
+    python app/parsers/docx_parser.py samples
+  fi
+  if find /app/storage/parsed -type f -name '*.json' | grep -q .; then
+    python app/indexer/build_index.py
+  fi
+  touch /app/storage/.diagram-status-v1
+fi
+
 exec "$@"

@@ -21,9 +21,11 @@ const KIND_LABEL: Record<SpImage["kind"], string> = {
 export function DiagramViewer({
 	images,
 	fallbackExplanation,
+	unavailableInDocument = false,
 }: {
 	images: SpImage[]
 	fallbackExplanation?: string | null
+	unavailableInDocument?: boolean
 }) {
 	const [idx, setIdx] = useState(0)
 	const [zoom, setZoom] = useState(1)
@@ -31,7 +33,9 @@ export function DiagramViewer({
 	if (images.length === 0) {
 		return (
 			<div className="border border-dashed border-zinc-300 bg-white px-4 py-10 text-center text-zinc-600">
-				Tidak ada diagram yang terdeteksi untuk prosedur ini di dokumen TSD.
+				{unavailableInDocument
+					? "Bagian prosedur ditemukan, tetapi diagram ditandai Not Available pada dokumen TSD."
+					: "Bagian prosedur ditemukan, tetapi tidak memuat diagram yang dapat ditampilkan."}
 			</div>
 		)
 	}
@@ -180,7 +184,7 @@ export function DiagramViewer({
 					</div>
 				) : (
 					<p className="max-w-[65ch] text-sm leading-6 text-zinc-500">
-						Dokumen TSD tidak memuat penjelasan naratif untuk diagram ini.
+						Diagram tersedia, tetapi subbagian prosedur ini tidak berisi penjelasan naratif khusus.
 					</p>
 				)}
 			</div>

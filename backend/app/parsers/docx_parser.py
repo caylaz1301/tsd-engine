@@ -196,6 +196,16 @@ def _explanation(items) -> str:
     return "\n".join(body).strip()
 
 
+def _diagram_status(items, diagrams) -> str:
+    """Bedakan diagram kosong dari diagram yang memang tidak disediakan."""
+    if diagrams:
+        return "available"
+    text = " ".join(v for kind, v in items if kind == "text")
+    if re.search(r"\bnot\s+available\b|\btidak\s+tersedia\b", text, re.IGNORECASE):
+        return "not_available"
+    return "missing"
+
+
 # --------------------------------------------------------------- inti M2
 
 def parse(path: Path, images_root: Path, segment_override: str | None = None) -> dict:
@@ -308,6 +318,7 @@ def parse(path: Path, images_root: Path, segment_override: str | None = None) ->
             "section": heading,
             "images": saved,
             "explanation": explanation,
+            "status": _diagram_status(items, diagrams),
         }
 
         if is_summary:

@@ -128,6 +128,8 @@ CREATE TABLE sp_doc_occurrences (
     called_by     TEXT,
     section_model TEXT,
     section_flow  TEXT,
+    model_status  TEXT,
+    flow_status   TEXT,
     confidence    TEXT,
     explanation   TEXT
 );
@@ -261,9 +263,10 @@ def build() -> dict:
             # sementara sp_index tetap satu baris per SP agar hasil pencarian
             # tidak memunculkan entri kembar.
             con.execute(
-                "INSERT INTO sp_doc_occurrences VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO sp_doc_occurrences VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (key, p["sp_name"], segment, fname, p.get("heading_level"),
                  p.get("called_by"), dm.get("section"), df.get("section"),
+                 dm.get("status", "missing"), df.get("status", "missing"),
                  p.get("confidence"), expl or None),
             )
 

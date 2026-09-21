@@ -105,6 +105,8 @@ export type SpOccurrence = {
 	heading_level: number | null
 	section_model: string | null
 	section_flow: string | null
+	model_status: "available" | "not_available" | "missing"
+	flow_status: "available" | "not_available" | "missing"
 	confidence: string | null
 }
 

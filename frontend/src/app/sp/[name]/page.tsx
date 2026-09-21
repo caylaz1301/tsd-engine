@@ -51,6 +51,9 @@ export default async function SpPage({
 
 	const parameters = parseParameters(sp.parameters)
 	const multiDoc = sp.occurrences.length > 1
+	const unavailableInDocument = sp.occurrences.length > 0 && sp.occurrences.every(
+		(o) => o.model_status === "not_available" && o.flow_status === "not_available",
+	)
 
 	return (
 		<div className="flex flex-col gap-6">
@@ -233,6 +236,7 @@ export default async function SpPage({
 						<DiagramViewer
 							images={sp.images}
 							fallbackExplanation={sp.explanation}
+							unavailableInDocument={unavailableInDocument}
 						/>
 					</section>
 

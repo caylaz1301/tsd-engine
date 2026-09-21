@@ -187,7 +187,8 @@ def get_sp(name: str) -> dict[str, Any] | None:
         # sebagian SP dibahas di lebih dari satu dokumen.
         sp["occurrences"] = rows_to_dicts(con.execute(
             "SELECT segment, tsd_filename, heading_level, section_model, "
-            "section_flow, confidence FROM sp_doc_occurrences "
+            "section_flow, model_status, flow_status, confidence "
+            "FROM sp_doc_occurrences "
             "WHERE sp_key = ? ORDER BY segment", (key,)
         ).fetchall())
 
