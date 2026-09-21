@@ -7,11 +7,8 @@
  */
 
 const PUBLIC_API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? ""
-const PUBLIC_API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000"
 const DIRECT_BROWSER_API_BASE =
-	typeof window !== "undefined" && !PUBLIC_API_BASE
-		? `${window.location.protocol}//${window.location.hostname}:${PUBLIC_API_PORT}`
-		: PUBLIC_API_BASE
+	typeof window !== "undefined" ? PUBLIC_API_BASE : ""
 export const API_BASE = typeof window === "undefined"
 	? (process.env.API_INTERNAL_BASE ?? PUBLIC_API_BASE) || "http://127.0.0.1:8000"
 	: PUBLIC_API_BASE

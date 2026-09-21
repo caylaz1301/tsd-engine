@@ -1,0 +1,79 @@
+name: tsd-engine
+
+services:
+  frontend:
+    image: ghcr.io/caylaz1301/tsd-engine-frontend:latest
+    environment:
+      API_INTERNAL_BASE: http://backend:8000
+      BACKEND_INTERNAL_URL: http://backend:8000
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/caylaz1301/tsd-engine-backend:latest
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+      BACKEND_INTERNAL_URL: http://backend:8000
+      ONLYOFFICE_INTERNAL_URL: http://documentserver
+      ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-tsd-engine-local-editor-secret}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${APP_PORT:-3000},http://127.0.0.1:${APP_PORT:-3000}}
+    volumes:
+      - tsd_samples:/app/samples
+      - tsd_storage:/app/storage
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+    depends_on:
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+  documentserver:
+    image: onlyoffice/documentserver:latest
+    platform: linux/amd64
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-tsd-engine-local-editor-secret}
+      JWT_HEADER: AuthorizationJwt
+    ports:
+      - "${DOCS_PORT:-8080}:80"
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+      - onlyoffice_logs:/var/log/onlyoffice
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/healthcheck"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  tsd_samples:
+  tsd_storage:
+  ollama_data:
+  onlyoffice_data:
+  onlyoffice_logs:
