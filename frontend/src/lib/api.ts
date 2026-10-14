@@ -35,6 +35,7 @@ export type SearchRow = SpBase & {
 	image_count: number
 	score: number
 	module: string
+	bank: string | null
 }
 
 export type SearchResponse = {
@@ -107,6 +108,7 @@ export type SpOccurrence = {
 	section_flow: string | null
 	model_status: "available" | "not_available" | "missing"
 	flow_status: "available" | "not_available" | "missing"
+	bank: string
 	confidence: string | null
 }
 
@@ -148,6 +150,7 @@ export type SegmentSummary = {
 	sharepoint_url: string | null
 	indexed_sp: number | null
 	module: string
+	bank: string
 	status: "active" | "inactive"
 	size_bytes?: number
 	updated_at?: string | null
@@ -161,6 +164,7 @@ export type DocumentPreview = {
 	status: "active" | "inactive"
 	segment: string
 	module: string
+	bank: string
 	size_bytes: number
 	modified_at: number
 	title: string | null
@@ -203,6 +207,10 @@ export type QualityReport = {
 	status: "ready" | "needs_revision" | "active"
 	checked_at: string
 	activated_at?: string
+	bank?: string
+	bank_suggestion?: string
+	bank_confidence?: "low" | "medium" | "high"
+	bank_candidates?: string[]
 	summary: { checks: number; passed: number; failed: number; procedures: number }
 	checks: QualityCheck[]
 }
@@ -233,10 +241,11 @@ export async function getQualityReports(): Promise<QualityReport[]> {
 	return response.reports
 }
 
-export async function activateDocument(reportId: string, replace = false): Promise<QualityReport> {
+export async function activateDocument(reportId: string, bank: string, replace = false): Promise<QualityReport> {
 	let res: Response
 	try {
-		res = await fetch(`${API_BASE}/api/documents/checks/${reportId}/activate?replace=${replace}`, { method: "POST" })
+		const params = new URLSearchParams({ replace: String(replace), bank })
+		res = await fetch(`${API_BASE}/api/documents/checks/${reportId}/activate?${params}`, { method: "POST" })
 	} catch {
 		throw new ApiDownError("Backend tidak dapat dihubungi untuk mengaktifkan dokumen.")
 	}
@@ -379,6 +388,7 @@ export type SearchOptions = {
 	status?: string
 	segment?: string
 	module?: string
+	bank?: string
 	hideVariants?: boolean
 	limit?: number
 	offset?: number
@@ -389,6 +399,7 @@ export async function search(opts: SearchOptions): Promise<SearchResponse> {
 	if (opts.status) p.set("status", opts.status)
 	if (opts.segment) p.set("segment", opts.segment)
 	if (opts.module) p.set("module", opts.module)
+	if (opts.bank) p.set("bank", opts.bank)
 	if (opts.hideVariants) p.set("hide_variants", "true")
 	p.set("limit", String(opts.limit ?? 20))
 	p.set("offset", String(opts.offset ?? 0))
@@ -428,6 +439,11 @@ export async function getModules(): Promise<ModuleSummary[]> {
 	return res.modules
 }
 
+export async function getBanks(): Promise<string[]> {
+	const res = await getJson<{ banks: string[] }>("/api/banks")
+	return res.banks
+}
+
 export async function getDocumentPreview(filename: string, offset = 0, limit = 80): Promise<DocumentPreview> {
 	return getJson<DocumentPreview>(`/api/documents/${encodeURIComponent(filename)}/preview?offset=${offset}&limit=${limit}`)
 }
@@ -453,17 +469,17 @@ export function spReportUrl(name: string): string {
 	return `${PUBLIC_API_BASE}/api/sp/${encodeURIComponent(name)}/report.pdf`
 }
 
-export async function updateDocumentMetadata(filename: string, newFilename: string, module: string, tags: string[]) {
+export async function updateDocumentMetadata(filename: string, newFilename: string, module: string, bank: string, tags: string[]) {
 	const response = await fetch(`${API_BASE}/api/documents/${encodeURIComponent(filename)}/metadata`, {
 		method: "PUT",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ filename: newFilename, module, tags }),
+		body: JSON.stringify({ filename: newFilename, module, bank, tags }),
 	})
 	if (!response.ok) {
 		const payload = (await response.json().catch(() => null)) as { detail?: string } | null
 		throw new Error(payload?.detail ?? `Metadata gagal disimpan (${response.status}).`)
 	}
-	return response.json() as Promise<{ filename: string; module: string; tags: string[] }>
+	return response.json() as Promise<{ filename: string; module: string; bank: string; tags: string[] }>
 }
 
 async function documentMutation(filename: string, action: "activate" | "deactivate" | "delete") {

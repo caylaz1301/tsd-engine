@@ -2,6 +2,7 @@ import Link from "next/link"
 import {
 	search,
 	getModules,
+	getBanks,
 	getSegments,
 	type SearchResponse,
 	type ModuleSummary,
@@ -34,6 +35,7 @@ type Params = {
 	status?: string
 	segment?: string
 	module?: string
+	bank?: string
 	hide_variants?: string
 	offset?: string
 }
@@ -45,6 +47,7 @@ function buildHref(base: Params, patch: Partial<Params>): string {
 	if (merged.status) p.set("status", merged.status)
 	if (merged.segment) p.set("segment", merged.segment)
 	if (merged.module) p.set("module", merged.module)
+	if (merged.bank) p.set("bank", merged.bank)
 	if (merged.hide_variants === "false") p.set("hide_variants", "false")
 	if (merged.offset && merged.offset !== "0") p.set("offset", merged.offset)
 	return `/search?${p.toString()}`
@@ -61,12 +64,13 @@ export default async function SearchPage({
 	const status = sp.status ?? ""
 	const segment = sp.segment ?? ""
 	const selectedModule = sp.module ?? ""
+	const selectedBank = sp.bank ?? ""
 	// Salinan arsip disembunyikan secara bawaan; 1.381 objek bertanggal akan
 	// menenggelamkan hasil yang relevan kalau ikut ditampilkan.
 	const hideVariants = sp.hide_variants !== "false" && status !== "sql_variant"
 	const offset = Math.max(0, Number.parseInt(sp.offset ?? "0", 10) || 0)
 
-	if (!q && !selectedModule) {
+	if (!q && !selectedModule && !selectedBank) {
 		let documentCount = 0
 		try {
 			documentCount = (await getSegments()).filter((item) => item.status === "active").length
@@ -146,16 +150,18 @@ export default async function SearchPage({
 
 	let res: SearchResponse
 	let modules: ModuleSummary[]
+	let banks: string[]
 	try {
-		[res, modules] = await Promise.all([search({
+		[res, modules, banks] = await Promise.all([search({
 			q,
 			status: status || undefined,
 			segment: segment || undefined,
 			module: selectedModule || undefined,
+			bank: selectedBank || undefined,
 			hideVariants,
 			limit: PAGE_SIZE,
 			offset,
-		}), getModules()])
+		}), getModules(), getBanks()])
 	} catch (e) {
 		return (
 			<ErrorPanel
@@ -178,7 +184,7 @@ export default async function SearchPage({
 		<div className="flex flex-col gap-5">
 			<div>
 					<h1 className="text-lg font-semibold tracking-tight text-zinc-900">
-						{q ? <>Hasil untuk <Mono className="text-lg">{q}</Mono></> : <>Semua SP modul <Mono className="text-lg">{selectedModule}</Mono></>}
+						{q ? <>Hasil untuk <Mono className="text-lg">{q}</Mono></> : <>Stored procedure sesuai filter</>}
 				</h1>
 				<p className="mt-1 text-zinc-500">
 					{res.total === 0
@@ -191,8 +197,9 @@ export default async function SearchPage({
 			<form action="/search" className="flex flex-wrap items-end gap-3 border border-zinc-200 bg-white p-3">
 				<input type="hidden" name="q" value={q} /><input type="hidden" name="status" value={status} />
 				<label className="min-w-44"><span className="mb-1 block text-xs font-medium text-zinc-600">Modul</span><select name="module" defaultValue={selectedModule} className="h-10 w-full border border-zinc-300 bg-white px-3 text-sm text-zinc-800"><option value="">Semua modul</option>{modules.map((item) => <option key={item.module} value={item.module}>{item.module} ({num(item.sp_count)})</option>)}</select></label>
+				<label className="min-w-52"><span className="mb-1 block text-xs font-medium text-zinc-600">Bank</span><select name="bank" defaultValue={selectedBank} className="h-10 w-full border border-zinc-300 bg-white px-3 text-sm text-zinc-800"><option value="">Semua bank</option><option value="Belum ditentukan">Belum ditentukan</option>{banks.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
 				<button type="submit" className="min-h-10 border border-zinc-300 bg-zinc-50 px-4 text-sm font-medium text-zinc-800 hover:bg-zinc-100">Terapkan filter</button>
-				{selectedModule ? <Link href={buildHref(sp, { module: "", offset: "0" })} className="inline-flex min-h-10 items-center text-sm text-zinc-600 hover:text-zinc-950">Reset modul</Link> : null}
+				{selectedModule || selectedBank ? <Link href={buildHref(sp, { module: "", bank: "", offset: "0" })} className="inline-flex min-h-10 items-center text-sm text-zinc-600 hover:text-zinc-950">Reset filter</Link> : null}
 			</form>
 
 			<div className="thin-scroll flex overflow-x-auto border-b border-zinc-200">
@@ -222,6 +229,7 @@ export default async function SearchPage({
 						</Link>
 						) : null}
 						{selectedModule ? <span className="font-mono text-xs text-zinc-600">modul {selectedModule}</span> : null}
+						{selectedBank ? <span className="text-xs text-zinc-600">bank {selectedBank}</span> : null}
 					<Link
 						href={buildHref(sp, {
 							hide_variants: hideVariants ? "false" : "true",
@@ -262,6 +270,7 @@ export default async function SearchPage({
 
 								<div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-600">
 									<span className="border border-zinc-200 bg-zinc-50 px-1.5 font-mono text-xs text-zinc-700">{r.module}</span>
+									{r.bank ? <span className="text-xs text-zinc-600">{r.bank}</span> : null}
 								{r.segment ? (
 									<span>
 									TSD <Mono>{r.segment}</Mono>

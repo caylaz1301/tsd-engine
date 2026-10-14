@@ -32,6 +32,7 @@ from app.quality import checker
 from app.documents import repository
 from app.documents import editor
 from app import exports
+from app.banks import normalize_bank
 
 router = APIRouter(prefix="/api")
 
@@ -41,6 +42,7 @@ STATUS_VALUES = ("matched", "doc_only", "sql_only", "sql_variant")
 class DocumentMetadata(BaseModel):
     filename: str = Field(min_length=6, max_length=185)
     module: str = Field(min_length=1, max_length=40)
+    bank: str = Field(min_length=1, max_length=60)
     tags: list[str] = Field(default_factory=list, max_length=10)
 
 
@@ -92,6 +94,7 @@ def get_search(
     status: str | None = Query(None),
     segment: str | None = Query(None),
     module: str | None = Query(None),
+    bank: str | None = Query(None),
     hide_variants: bool = Query(False, description="sembunyikan salinan arsip"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -107,6 +110,7 @@ def get_search(
         status=status,
         segment=segment,
         module=module,
+        bank=bank,
         hide_variants=hide_variants,
         limit=limit,
         offset=offset,
@@ -188,6 +192,11 @@ def get_modules() -> dict:
     return {"modules": _guard(index_db.list_modules)}
 
 
+@router.get("/banks")
+def get_banks() -> dict:
+    return {"banks": repository.list_banks()}
+
+
 @router.get("/documents/checks")
 def get_document_checks() -> dict:
     return {"reports": checker.list_reports(limit=10)}
@@ -221,7 +230,11 @@ async def check_document(request: Request) -> dict:
 
 
 @router.post("/documents/checks/{report_id}/activate")
-async def activate_checked_document(report_id: str, replace: bool = Query(False)) -> dict:
+async def activate_checked_document(
+    report_id: str,
+    replace: bool = Query(False),
+    bank: str = Query(..., min_length=1, max_length=60),
+) -> dict:
     report = checker.load_report(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Hasil pemeriksaan tidak ditemukan.")
@@ -231,9 +244,15 @@ async def activate_checked_document(report_id: str, replace: bool = Query(False)
     if not staged.exists():
         raise HTTPException(status_code=409, detail="File pemeriksaan sudah tidak tersedia.")
     try:
+        bank = normalize_bank(bank)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
         result = await run_in_threadpool(ingest_document, staged, report["filename"], replace)
+        confirmed_bank = await run_in_threadpool(repository.set_bank, report["filename"], bank)
     except DuplicateDocumentError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    report["bank"] = confirmed_bank
     checker.mark_activated(report)
     return {"report": report, "document": result}
 
@@ -315,7 +334,7 @@ def preview_document(
 @router.put("/documents/{filename}/metadata")
 def update_document_metadata(filename: str, payload: DocumentMetadata) -> dict:
     try:
-        return repository.update_metadata(filename, payload.filename, payload.module, payload.tags)
+        return repository.update_metadata(filename, payload.filename, payload.module, payload.bank, payload.tags)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FileExistsError as exc:

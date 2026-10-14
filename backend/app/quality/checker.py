@@ -15,6 +15,7 @@ from zipfile import ZipFile
 from docx import Document
 
 from app import config as C
+from app.banks import detect_bank
 from app.indexer.ingest import validate_docx, validate_filename
 from app.parsers import docx_parser
 
@@ -262,6 +263,7 @@ def check_document(temp_path: Path, filename: str) -> dict[str, Any]:
     sections = docx_parser._sections(document)
     paragraphs = _paragraph_pages(document)
     text_paragraphs = [(index, page, text, style) for index, page, text, style in paragraphs if text]
+    bank_detection = detect_bank(filename, "\n".join(text for _, _, text, _ in text_paragraphs[:160]))
     toc_page_map = _toc_pages(paragraphs)
     headings = [
         (toc_page_map.get(_heading_identity(text), page), text, style)
@@ -376,6 +378,9 @@ def check_document(temp_path: Path, filename: str) -> dict[str, Any]:
     shutil.move(str(temp_path), staged_path)
     report = {
         "id": report_id, "checker_version": CHECKER_VERSION, "filename": name, "segment": parsed.get("segment"),
+        "bank_suggestion": bank_detection["suggestion"],
+        "bank_confidence": bank_detection["confidence"],
+        "bank_candidates": bank_detection["candidates"],
         "score": score, "eligible": score == 100, "status": "ready" if score == 100 else "needs_revision",
         "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "summary": {"checks": len(checks), "passed": passed, "failed": len(checks) - passed, "procedures": len(procedures)},

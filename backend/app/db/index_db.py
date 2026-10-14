@@ -68,6 +68,7 @@ SEARCH_SQL = """
 SELECT i.sp_key, i.sp_name, i.segment, i.tsd_filename, i.status,
        i.confidence, i.variant, i.base_name, i.sql_database, i.sql_file,
        i.body_lines, i.param_count, i.called_by,
+       (SELECT GROUP_CONCAT(DISTINCT o.bank) FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key) AS bank,
        (SELECT COUNT(*) FROM sp_images m WHERE m.sp_key = i.sp_key) AS image_count,
        bm25(sp_fts) AS score
 FROM sp_fts f
@@ -76,6 +77,7 @@ WHERE sp_fts MATCH :match
   AND (:status   IS NULL OR i.status  = :status)
   AND (:segment  IS NULL OR i.segment = :segment)
   AND (:module   IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
+  AND (:bank IS NULL OR EXISTS (SELECT 1 FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key AND o.bank = :bank))
   AND (:hide_variants = 0 OR i.variant IS NULL)
 ORDER BY (LOWER(i.sp_name) = LOWER(:raw)) DESC,
          (i.status = 'matched') DESC,
@@ -92,6 +94,7 @@ WHERE sp_fts MATCH :match
   AND (:status  IS NULL OR i.status  = :status)
   AND (:segment IS NULL OR i.segment = :segment)
   AND (:module  IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
+  AND (:bank IS NULL OR EXISTS (SELECT 1 FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key AND o.bank = :bank))
   AND (:hide_variants = 0 OR i.variant IS NULL)
 """
 
@@ -99,12 +102,14 @@ BROWSE_SQL = """
 SELECT i.sp_key, i.sp_name, i.segment, i.tsd_filename, i.status,
        i.confidence, i.variant, i.base_name, i.sql_database, i.sql_file,
        i.body_lines, i.param_count, i.called_by,
+       (SELECT GROUP_CONCAT(DISTINCT o.bank) FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key) AS bank,
        (SELECT COUNT(*) FROM sp_images m WHERE m.sp_key = i.sp_key) AS image_count,
        0.0 AS score
 FROM sp_index i
 WHERE (:status IS NULL OR i.status = :status)
   AND (:segment IS NULL OR i.segment = :segment)
   AND (:module IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
+  AND (:bank IS NULL OR EXISTS (SELECT 1 FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key AND o.bank = :bank))
   AND (:hide_variants = 0 OR i.variant IS NULL)
 ORDER BY (i.status = 'matched') DESC, i.sp_name
 LIMIT :limit OFFSET :offset
@@ -115,6 +120,7 @@ SELECT COUNT(*) FROM sp_index i
 WHERE (:status IS NULL OR i.status = :status)
   AND (:segment IS NULL OR i.segment = :segment)
   AND (:module IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
+  AND (:bank IS NULL OR EXISTS (SELECT 1 FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key AND o.bank = :bank))
   AND (:hide_variants = 0 OR i.variant IS NULL)
 """
 
@@ -124,6 +130,7 @@ def search(
     status: str | None = None,
     segment: str | None = None,
     module: str | None = None,
+    bank: str | None = None,
     hide_variants: bool = False,
     limit: int = 20,
     offset: int = 0,
@@ -135,6 +142,7 @@ def search(
         "status": status,
         "segment": segment,
         "module": module,
+        "bank": bank,
         "hide_variants": 1 if hide_variants else 0,
         "limit": limit,
         "offset": offset,
@@ -187,7 +195,7 @@ def get_sp(name: str) -> dict[str, Any] | None:
         # sebagian SP dibahas di lebih dari satu dokumen.
         sp["occurrences"] = rows_to_dicts(con.execute(
             "SELECT segment, tsd_filename, heading_level, section_model, "
-            "section_flow, model_status, flow_status, confidence "
+            "section_flow, model_status, flow_status, bank, confidence "
             "FROM sp_doc_occurrences "
             "WHERE sp_key = ? ORDER BY segment", (key,)
         ).fetchall())
@@ -208,7 +216,7 @@ def get_sp(name: str) -> dict[str, Any] | None:
         if sp.get("tsd_filename"):
             doc = con.execute(
                 "SELECT tsd_filename, segment, sharepoint_url, "
-                "procedure_count FROM documents WHERE tsd_filename = ?",
+                "procedure_count, bank FROM documents WHERE tsd_filename = ?",
                 (sp["tsd_filename"],)
             ).fetchone()
             sp["document"] = dict(doc) if doc else None
@@ -300,7 +308,7 @@ def list_segments() -> list[dict[str, Any]]:
     try:
         rows = rows_to_dicts(con.execute(
             "SELECT d.tsd_filename, d.segment, d.procedure_count, "
-            "d.sharepoint_url, "
+            "d.sharepoint_url, d.bank, "
             "(SELECT COUNT(*) FROM sp_index i "
             "  WHERE i.tsd_filename = d.tsd_filename "
             "    AND i.status = 'matched') indexed_sp "

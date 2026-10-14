@@ -1,4 +1,4 @@
-import { getSegments, type SegmentSummary } from "@/lib/api"
+import { getBanks, getSegments, type SegmentSummary } from "@/lib/api"
 import { ErrorPanel } from "@/components/ui"
 import { DocumentUpload } from "@/components/document-upload"
 import { DocumentLibrary } from "@/components/document-library"
@@ -8,8 +8,9 @@ export const dynamic = "force-dynamic"
 
 export default async function SegmentsPage() {
 	let segments: SegmentSummary[]
+	let banks: string[]
 	try {
-		segments = await getSegments()
+		[segments, banks] = await Promise.all([getSegments(), getBanks()])
 	} catch (e) {
 		return (
 			<ErrorPanel
@@ -33,9 +34,9 @@ export default async function SegmentsPage() {
 				</div>
 			</div>
 
-			<DocumentLibrary documents={segments} />
+			<DocumentLibrary documents={segments} banks={banks} />
 
-			<DocumentUpload />
+			<DocumentUpload banks={banks} />
 		</div>
 	)
 }

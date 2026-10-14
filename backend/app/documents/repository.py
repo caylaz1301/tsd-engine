@@ -18,6 +18,7 @@ from app.indexer import build_index
 from app.indexer.ingest import PARSED_DIR, SAMPLES_DIR, validate_docx, validate_filename
 from app.parsers import docx_parser
 from app.modules import infer_module
+from app.banks import UNKNOWN_BANK, bank_options, detect_bank, normalize_bank
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -50,6 +51,21 @@ def _detected_module(item: dict[str, Any]) -> str:
     except (OSError, json.JSONDecodeError):
         pass
     return infer_module(*content)
+
+
+def _detected_bank(filename: str, path: Path | None = None) -> str:
+    text = ""
+    source = path or (ACTIVE_DIR / filename)
+    try:
+        document = Document(source)
+        text = "\n".join(
+            " ".join(paragraph.text.split())
+            for paragraph in document.paragraphs[:160]
+            if paragraph.text.strip()
+        )
+    except (OSError, ValueError):
+        pass
+    return str(detect_bank(filename, text)["suggestion"])
 
 
 def _read_registry() -> dict[str, Any]:
@@ -164,6 +180,7 @@ def preview(filename: str, offset: int = 0, limit: int = 80) -> dict[str, Any]:
         "status": status,
         "segment": segment,
         "module": registry.get("module") or infer_module(segment),
+        "bank": registry.get("bank") or UNKNOWN_BANK,
         "size_bytes": path.stat().st_size,
         "modified_at": path.stat().st_mtime,
         "title": props.title or None,
@@ -179,18 +196,32 @@ def sync_registry(documents: list[dict[str, Any]]) -> None:
     registry = _read_registry()
     records = registry.setdefault("documents", {})
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    bank_index_changed = False
     for item in documents:
         record = records.setdefault(item["tsd_filename"], {})
         detected = _detected_module(item)
+        if not record.get("bank_source") or not record.get("bank") or (
+            record.get("bank_source") == "automatic"
+            and record.get("bank_detection_version") != 2
+        ):
+            previous_bank = record.get("bank")
+            detected_bank = _detected_bank(item["tsd_filename"])
+            record["bank"] = detected_bank
+            record["bank_source"] = "automatic"
+            record["bank_detection_version"] = 2
+            bank_index_changed = bank_index_changed or previous_bank != detected_bank
         current = record.get("module")
         record.update({
             "status": "active",
             "segment": item.get("segment"),
             "module": detected if not current or current == "LAINNYA" else current,
+            "bank": record.get("bank") or UNKNOWN_BANK,
             "updated_at": record.get("updated_at") or now,
             "procedure_count": item.get("procedure_count"),
         })
     _write_registry(registry)
+    if bank_index_changed:
+        build_index.build()
 
 
 def enrich_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -200,6 +231,7 @@ def enrich_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row = dict(item)
         record = registry.get(row["tsd_filename"], {})
         row["module"] = record.get("module") or _detected_module(row)
+        row["bank"] = record.get("bank") or UNKNOWN_BANK
         row["tags"] = record.get("tags", [])
         row["updated_at"] = record.get("updated_at")
         enriched.append(row)
@@ -207,12 +239,13 @@ def enrich_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def update_metadata(
-    filename: str, new_filename: str, module: str, tags: list[str]
+    filename: str, new_filename: str, module: str, bank: str, tags: list[str]
 ) -> dict[str, Any]:
     name = validate_filename(filename)
     renamed = validate_filename(new_filename.strip())
     source, status = _resolve(name)
     clean_module = module.strip().upper()
+    clean_bank = normalize_bank(bank)
     if not clean_module or len(clean_module) > 40:
         raise ValueError("Modul wajib diisi dan maksimal 40 karakter.")
     clean_tags = list(dict.fromkeys(tag.strip() for tag in tags if tag.strip()))
@@ -259,13 +292,34 @@ def update_metadata(
         record = records.pop(name, {}) if renamed != name else records.setdefault(name, {})
         record.update({
             "module": clean_module,
+            "bank": clean_bank,
+            "bank_source": "manual",
             "tags": clean_tags,
             "status": status,
             "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         })
         records[renamed] = record
         _write_registry(registry)
-    return {"filename": renamed, "module": clean_module, "tags": clean_tags}
+        if status == "active":
+            build_index.build()
+    return {"filename": renamed, "module": clean_module, "bank": clean_bank, "tags": clean_tags}
+
+
+def set_bank(filename: str, bank: str) -> str:
+    name = validate_filename(filename)
+    clean_bank = normalize_bank(bank)
+    with _lock:
+        registry = _read_registry()
+        record = registry.setdefault("documents", {}).setdefault(name, {})
+        record.update({"bank": clean_bank, "bank_source": "manual", "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+        _write_registry(registry)
+        build_index.build()
+    return clean_bank
+
+
+def list_banks() -> list[str]:
+    registry = _read_registry().get("documents", {})
+    return bank_options([record.get("bank", "") for record in registry.values()])
 
 
 def inactive_documents() -> list[dict[str, Any]]:
@@ -283,6 +337,7 @@ def inactive_documents() -> list[dict[str, Any]]:
             "tsd_filename": path.name,
             "segment": segment,
             "module": module,
+            "bank": record.get("bank") or _detected_bank(path.name, path),
             "status": "inactive",
             "procedure_count": record.get("procedure_count"),
             "indexed_sp": 0,

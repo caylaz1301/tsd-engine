@@ -7,6 +7,8 @@ import { activateDocument, checkDocument, getQualityReports, recheckDocument, ty
 import { cn } from "@/lib/utils"
 
 const MAX_BYTES = 30 * 1024 * 1024
+const UNKNOWN_BANK = "Belum ditentukan"
+const OTHER_BANK = "__other__"
 
 function validateFile(file: File): string | null {
 	if (!file.name.toLowerCase().endsWith(".docx")) return "Pilih dokumen Microsoft Word dengan ekstensi .docx."
@@ -16,7 +18,7 @@ function validateFile(file: File): string | null {
 	return null
 }
 
-export function DocumentUpload() {
+export function DocumentUpload({ banks }: { banks: string[] }) {
 	const router = useRouter()
 	const inputRef = useRef<HTMLInputElement>(null)
 	const [file, setFile] = useState<File | null>(null)
@@ -29,11 +31,15 @@ export function DocumentUpload() {
 	const [report, setReport] = useState<QualityReport | null>(null)
 	const [history, setHistory] = useState<QualityReport[]>([])
 	const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null)
+	const [bankChoice, setBankChoice] = useState(UNKNOWN_BANK)
+	const [customBank, setCustomBank] = useState("")
+	const effectiveBank = bankChoice === OTHER_BANK ? customBank.trim() : bankChoice
 
 	useEffect(() => { void getQualityReports().then(setHistory).catch(() => undefined) }, [])
 
 	function choose(next: File | null) {
 		setReport(null); setExpandedHistoryId(null); setError(null)
+		setBankChoice(UNKNOWN_BANK); setCustomBank("")
 		if (!next) return setFile(null)
 		const issue = validateFile(next)
 		setFile(issue ? null : next); setError(issue)
@@ -45,6 +51,7 @@ export function DocumentUpload() {
 		try {
 			const next = await checkDocument(file)
 			setReport(next)
+			setBankChoice(next.bank_suggestion && next.bank_suggestion !== UNKNOWN_BANK ? next.bank_suggestion : UNKNOWN_BANK)
 			setExpandedHistoryId(null)
 			setHistory((items) => [next, ...items.filter((item) => item.id !== next.id)])
 			setFile(null)
@@ -56,9 +63,13 @@ export function DocumentUpload() {
 
 	async function activate() {
 		if (!report?.eligible || activating) return
+		if (!effectiveBank || effectiveBank === UNKNOWN_BANK) {
+			setError("Pilih bank pemilik dokumen sebelum menjadikannya sumber aktif.")
+			return
+		}
 		setActivating(true); setError(null)
 		try {
-			const active = await activateDocument(report.id, replace)
+			const active = await activateDocument(report.id, effectiveBank, replace)
 			setReport(active)
 			setHistory((items) => items.map((item) => item.id === active.id ? active : item))
 			router.refresh()
@@ -102,18 +113,18 @@ export function DocumentUpload() {
 				</div>
 			</section>
 
-			{report && !expandedHistoryId ? <QualityResult report={report} replace={replace} setReplace={setReplace} activating={activating} rechecking={rechecking} activate={activate} recheck={recheck} /> : null}
+			{report && !expandedHistoryId ? <QualityResult report={report} banks={banks} bankChoice={bankChoice} setBankChoice={setBankChoice} customBank={customBank} setCustomBank={setCustomBank} replace={replace} setReplace={setReplace} activating={activating} rechecking={rechecking} activate={activate} recheck={recheck} /> : null}
 
 			{history.length > 0 ? (
 				<section className="border-y border-zinc-200 py-4">
 					<div className="mb-2 flex items-baseline justify-between gap-4"><h2 className="font-semibold text-zinc-900">Riwayat pemeriksaan</h2><span className="text-sm text-zinc-500">10 terbaru</span></div>
 					<ul className="divide-y divide-zinc-200">{history.slice(0, 10).map((item) => {
 						const expanded = expandedHistoryId === item.id
-						return <li key={item.id}><button type="button" onClick={() => { if (expanded) { setExpandedHistoryId(null); setReport(null) } else { setReport(item); setExpandedHistoryId(item.id) } }} aria-expanded={expanded} className="flex w-full items-center gap-3 py-3 text-left hover:bg-zinc-50">
+						return <li key={item.id}><button type="button" onClick={() => { if (expanded) { setExpandedHistoryId(null); setReport(null) } else { setReport(item); setExpandedHistoryId(item.id); setBankChoice(item.bank || item.bank_suggestion || UNKNOWN_BANK); setCustomBank("") } }} aria-expanded={expanded} className="flex w-full items-center gap-3 py-3 text-left hover:bg-zinc-50">
 							<span className={cn("flex size-9 shrink-0 items-center justify-center border font-mono text-xs font-semibold", item.score === 100 ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800")}>{item.score}</span>
 							<span className="min-w-0 flex-1"><span className="block truncate font-mono text-sm font-medium text-zinc-900">{item.filename}</span><span className="block text-sm text-zinc-600">{item.status === "active" ? "Sumber aktif" : item.eligible ? "Siap diaktifkan" : `${item.summary.failed} pemeriksaan gagal`}</span></span>
 							<ChevronDown className={cn("size-4 text-zinc-400 transition-transform", expanded ? "rotate-180" : "-rotate-90")} aria-hidden />
-						</button>{expanded ? <div className="pb-4"><QualityResult report={item} replace={replace} setReplace={setReplace} activating={activating} rechecking={rechecking} activate={activate} recheck={recheck} /></div> : null}</li>
+						</button>{expanded ? <div className="pb-4"><QualityResult report={item} banks={banks} bankChoice={bankChoice} setBankChoice={setBankChoice} customBank={customBank} setCustomBank={setCustomBank} replace={replace} setReplace={setReplace} activating={activating} rechecking={rechecking} activate={activate} recheck={recheck} /></div> : null}</li>
 					})}</ul>
 				</section>
 			) : null}
@@ -121,8 +132,9 @@ export function DocumentUpload() {
 	)
 }
 
-function QualityResult({ report, replace, setReplace, activating, rechecking, activate, recheck }: { report: QualityReport; replace: boolean; setReplace: (value: boolean) => void; activating: boolean; rechecking: boolean; activate: () => void; recheck: () => void }) {
+function QualityResult({ report, banks, bankChoice, setBankChoice, customBank, setCustomBank, replace, setReplace, activating, rechecking, activate, recheck }: { report: QualityReport; banks: string[]; bankChoice: string; setBankChoice: (value: string) => void; customBank: string; setCustomBank: (value: string) => void; replace: boolean; setReplace: (value: boolean) => void; activating: boolean; rechecking: boolean; activate: () => void; recheck: () => void }) {
 	const active = report.status === "active"
+	const bankOptions = [...new Set([...banks, ...(report.bank_suggestion && report.bank_suggestion !== UNKNOWN_BANK ? [report.bank_suggestion] : [])])].sort((a, b) => a.localeCompare(b))
 	return (
 		<section className="border border-zinc-300 bg-white" aria-live="polite">
 			<header className="flex flex-col gap-4 border-b border-zinc-200 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
@@ -167,8 +179,20 @@ function QualityResult({ report, replace, setReplace, activating, rechecking, ac
 				</div>
 				<aside className="border-t border-zinc-200 bg-zinc-50 p-4 md:border-t-0 md:border-l md:p-5">
 					<h3 className="text-sm font-semibold text-zinc-900">Ringkasan</h3>
-					<dl className="mt-3 space-y-3 text-sm"><div><dt className="text-zinc-500">Segment</dt><dd className="mt-0.5 font-mono break-all text-zinc-900">{report.segment}</dd></div><div><dt className="text-zinc-500">Pemeriksaan</dt><dd className="mt-0.5 text-zinc-900">{report.summary.passed} lulus · {report.summary.failed} gagal</dd></div><div><dt className="text-zinc-500">Stored procedure</dt><dd className="mt-0.5 font-mono text-zinc-900">{report.summary.procedures}</dd></div></dl>
-					{report.eligible && !active ? <div className="mt-6 border-t border-zinc-200 pt-4"><label className="flex cursor-pointer items-start gap-2 text-sm text-zinc-700"><input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} className="mt-1 size-4 accent-blue-700" />Ganti sumber aktif bila nama file sama</label><button type="button" onClick={activate} disabled={activating} className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-60">{activating ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <FileCheck2 className="size-4" aria-hidden />}{activating ? "Mengaktifkan..." : "Jadikan sumber aktif"}</button></div> : null}
+					<dl className="mt-3 space-y-3 text-sm"><div><dt className="text-zinc-500">Segment</dt><dd className="mt-0.5 font-mono break-all text-zinc-900">{report.segment}</dd></div><div><dt className="text-zinc-500">Pemeriksaan</dt><dd className="mt-0.5 text-zinc-900">{report.summary.passed} lulus · {report.summary.failed} gagal</dd></div><div><dt className="text-zinc-500">Stored procedure</dt><dd className="mt-0.5 font-mono text-zinc-900">{report.summary.procedures}</dd></div>{active && report.bank ? <div><dt className="text-zinc-500">Bank</dt><dd className="mt-0.5 text-zinc-900">{report.bank}</dd></div> : null}</dl>
+					{report.eligible && !active ? <div className="mt-6 border-t border-zinc-200 pt-4">
+						<label className="block text-sm font-medium text-zinc-800">Bank pemilik dokumen
+							<select value={bankChoice} onChange={(event) => setBankChoice(event.target.value)} className="mt-1 h-10 w-full border border-zinc-300 bg-white px-2 text-sm font-normal text-zinc-900">
+								<option value={UNKNOWN_BANK}>Pilih bank</option>
+								{bankOptions.map((bank) => <option key={bank} value={bank}>{bank}</option>)}
+								<option value={OTHER_BANK}>Bank lainnya...</option>
+							</select>
+						</label>
+						{bankChoice === OTHER_BANK ? <label className="mt-3 block text-sm font-medium text-zinc-800">Nama bank<input value={customBank} onChange={(event) => setCustomBank(event.target.value)} maxLength={60} placeholder="Masukkan nama bank" className="mt-1 h-10 w-full border border-zinc-300 bg-white px-3 font-normal text-zinc-900 placeholder:text-zinc-500" /></label> : null}
+						<p className="mt-2 text-xs leading-5 text-zinc-600">{report.bank_confidence === "high" ? "Terdeteksi dari identitas dokumen. Tetap konfirmasi sebelum aktivasi." : report.bank_confidence === "medium" ? "Saran otomatis ditemukan. Periksa kembali sebelum aktivasi." : "Bank belum terdeteksi dengan yakin. Pilih secara manual."}</p>
+						<label className="mt-4 flex cursor-pointer items-start gap-2 text-sm text-zinc-700"><input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} className="mt-1 size-4 accent-blue-700" />Ganti sumber aktif bila nama file sama</label>
+						<button type="button" onClick={activate} disabled={activating || bankChoice === UNKNOWN_BANK || (bankChoice === OTHER_BANK && !customBank.trim())} className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-600">{activating ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <FileCheck2 className="size-4" aria-hidden />}{activating ? "Mengaktifkan..." : "Jadikan sumber aktif"}</button>
+					</div> : null}
 					{!report.eligible ? <div className="mt-6 border-t border-zinc-200 pt-4"><p className="text-sm leading-6 text-zinc-600">Setelah memperbaiki file Word, unggah versi barunya. Gunakan pemeriksaan ulang untuk menerapkan aturan checker terbaru pada file staging ini.</p><button type="button" onClick={recheck} disabled={rechecking} className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100 disabled:opacity-60">{rechecking ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ShieldCheck className="size-4" aria-hidden />}{rechecking ? "Memeriksa ulang..." : "Jalankan ulang checker"}</button></div> : null}
 				</aside>
 			</div>

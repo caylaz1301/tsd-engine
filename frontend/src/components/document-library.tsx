@@ -7,11 +7,12 @@ import { AlertCircle, ChevronLeft, ChevronRight, Download, Eye, FilePenLine, Pau
 import { deactivateTsd, deleteTsd, documentDownloadUrl, documentPdfUrl, reactivateTsd, updateDocumentMetadata, type SegmentSummary } from "@/lib/api"
 import { num } from "@/lib/utils"
 
-export function DocumentLibrary({ documents }: { documents: SegmentSummary[] }) {
+export function DocumentLibrary({ documents, banks }: { documents: SegmentSummary[]; banks: string[] }) {
 	const pageSize = 15
 	const router = useRouter()
 	const [query, setQuery] = useState("")
 	const [module, setModule] = useState("")
+	const [bank, setBank] = useState("")
 	const [status, setStatus] = useState("")
 	const [error, setError] = useState<string | null>(null)
 	const [notice, setNotice] = useState<string | null>(null)
@@ -22,7 +23,7 @@ export function DocumentLibrary({ documents }: { documents: SegmentSummary[] }) 
 	const modules = useMemo(() => [...new Set(documents.map((item) => item.module))].sort(), [documents])
 	const filtered = documents.filter((item) => {
 		const needle = query.trim().toLowerCase()
-		return (!needle || `${item.segment} ${item.tsd_filename}`.toLowerCase().includes(needle)) && (!module || item.module === module) && (!status || item.status === status)
+		return (!needle || `${item.segment} ${item.tsd_filename} ${item.bank}`.toLowerCase().includes(needle)) && (!module || item.module === module) && (!bank || item.bank === bank) && (!status || item.status === status)
 	})
 	const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
 	const currentPage = Math.min(page, pageCount)
@@ -92,7 +93,7 @@ export function DocumentLibrary({ documents }: { documents: SegmentSummary[] }) 
 		<section className="border border-zinc-200 bg-white">
 			{error ? <div role="alert" aria-live="assertive" className="fixed top-20 right-4 z-[70] flex max-w-md items-start gap-3 border border-red-300 bg-white px-4 py-3 text-sm text-red-800 shadow-lg"><AlertCircle className="mt-0.5 size-5 shrink-0" aria-hidden /><span className="flex-1 font-medium leading-5">{error}</span><button type="button" onClick={() => setError(null)} className="-mr-1 inline-flex size-7 shrink-0 items-center justify-center text-red-700 hover:bg-red-50" aria-label="Tutup notifikasi"><X className="size-4" /></button></div> : null}
 			{notice ? <div role="status" className="fixed top-20 right-4 z-[70] border border-emerald-300 bg-white px-4 py-3 text-sm font-medium text-emerald-800 shadow-lg">{notice}</div> : null}
-			{editing ? <MetadataDialog item={editing} close={() => setEditing(null)} saved={() => { setEditing(null); setNotice("Metadata dokumen diperbarui."); router.refresh() }} failed={setError} /> : null}
+			{editing ? <MetadataDialog item={editing} banks={banks} close={() => setEditing(null)} saved={() => { setEditing(null); setNotice("Metadata dokumen diperbarui."); router.refresh() }} failed={setError} /> : null}
 			<div className="flex flex-col gap-3 border-b border-zinc-200 p-4 lg:flex-row lg:items-center">
 				<div className="relative min-w-0 flex-1">
 					<Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-zinc-500" aria-hidden />
@@ -102,18 +103,24 @@ export function DocumentLibrary({ documents }: { documents: SegmentSummary[] }) 
 					<option value="">Semua modul</option>
 					{modules.map((value) => <option key={value} value={value}>{value}</option>)}
 				</select>
+				<select value={bank} onChange={(event) => { setBank(event.target.value); setPage(1) }} aria-label="Filter bank" className="h-10 border border-zinc-300 bg-white px-3 text-sm text-zinc-800">
+					<option value="">Semua bank</option>
+					<option value="Belum ditentukan">Belum ditentukan</option>
+					{banks.map((value) => <option key={value} value={value}>{value}</option>)}
+				</select>
 				<select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1) }} aria-label="Filter status dokumen" className="h-10 border border-zinc-300 bg-white px-3 text-sm text-zinc-800">
 					<option value="">Semua status</option><option value="active">Aktif</option><option value="inactive">Nonaktif</option>
 				</select>
 			</div>
 			{selected.size ? <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-4 py-2 text-sm"><strong>{selected.size} dipilih</strong><button onClick={() => bulk("deactivate")} className="border border-zinc-300 bg-white px-3 py-1.5 hover:bg-zinc-100">Nonaktifkan</button><button onClick={() => bulk("activate")} className="border border-zinc-300 bg-white px-3 py-1.5 hover:bg-zinc-100">Aktifkan</button><button onClick={() => bulk("delete")} className="border border-red-300 bg-white px-3 py-1.5 text-red-700 hover:bg-red-50">Hapus</button></div> : null}
 			<div className="thin-scroll overflow-x-auto">
-				<table className="w-full min-w-[880px] border-collapse text-sm">
-					<thead><tr className="border-b border-zinc-200 bg-zinc-50 text-left text-xs text-zinc-600"><th className="w-10 px-4 py-2.5"><input type="checkbox" aria-label="Pilih semua dokumen pada halaman ini" checked={visible.length > 0 && visible.every((item) => selected.has(item.tsd_filename))} onChange={(event) => setSelected((current) => { const next = new Set(current); visible.forEach((item) => event.target.checked ? next.add(item.tsd_filename) : next.delete(item.tsd_filename)); return next })} /></th><th className="px-2 py-2.5 font-medium">Dokumen</th><th className="px-3 py-2.5 font-medium">Modul</th><th className="px-3 py-2.5 text-right font-medium">SP</th><th className="px-3 py-2.5 font-medium">Status</th><th className="px-4 py-2.5 text-right font-medium">Aksi</th></tr></thead>
+				<table className="w-full min-w-[980px] border-collapse text-sm">
+					<thead><tr className="border-b border-zinc-200 bg-zinc-50 text-left text-xs text-zinc-600"><th className="w-10 px-4 py-2.5"><input type="checkbox" aria-label="Pilih semua dokumen pada halaman ini" checked={visible.length > 0 && visible.every((item) => selected.has(item.tsd_filename))} onChange={(event) => setSelected((current) => { const next = new Set(current); visible.forEach((item) => event.target.checked ? next.add(item.tsd_filename) : next.delete(item.tsd_filename)); return next })} /></th><th className="px-2 py-2.5 font-medium">Dokumen</th><th className="px-3 py-2.5 font-medium">Bank</th><th className="px-3 py-2.5 font-medium">Modul</th><th className="px-3 py-2.5 text-right font-medium">SP</th><th className="px-3 py-2.5 font-medium">Status</th><th className="px-4 py-2.5 text-right font-medium">Aksi</th></tr></thead>
 					<tbody className={pending ? "opacity-60" : ""}>{visible.map((item) => (
 						<tr key={item.tsd_filename} className="border-b border-zinc-100 hover:bg-zinc-50">
 							<td className="px-4 py-3"><input type="checkbox" checked={selected.has(item.tsd_filename)} onChange={() => toggle(item.tsd_filename)} aria-label={`Pilih ${item.tsd_filename}`} /></td>
 							<td className="max-w-[430px] px-2 py-3"><Link href={`/documents/${encodeURIComponent(item.tsd_filename)}`} className="block truncate font-mono font-medium text-zinc-950 hover:text-accent" title={item.tsd_filename}>{item.tsd_filename}</Link><span className="mt-0.5 block truncate text-xs text-zinc-600" title={item.segment}>{item.segment}{item.tags?.length ? ` · ${item.tags.join(", ")}` : ""}</span></td>
+							<td className="max-w-44 px-3 py-3 text-xs text-zinc-700"><span className="block truncate" title={item.bank}>{item.bank}</span></td>
 							<td className="px-3 py-3"><span className="border border-zinc-200 bg-zinc-50 px-2 py-1 font-mono text-xs text-zinc-700">{item.module}</span></td>
 							<td className="px-3 py-3 text-right font-mono tabular-nums text-zinc-700">{item.procedure_count == null ? "–" : num(item.procedure_count)}</td>
 							<td className="px-3 py-3"><span className={item.status === "active" ? "text-emerald-700" : "text-amber-700"}>{item.status === "active" ? "Aktif" : "Nonaktif"}</span></td>
@@ -138,18 +145,19 @@ export function DocumentLibrary({ documents }: { documents: SegmentSummary[] }) 
 	)
 }
 
-function MetadataDialog({ item, close, saved, failed }: { item: SegmentSummary; close: () => void; saved: () => void; failed: (message: string) => void }) {
+function MetadataDialog({ item, banks, close, saved, failed }: { item: SegmentSummary; banks: string[]; close: () => void; saved: () => void; failed: (message: string) => void }) {
 	const [filename, setFilename] = useState(item.tsd_filename)
 	const [module, setModule] = useState(item.module)
+	const [bank, setBank] = useState(item.bank)
 	const [tags, setTags] = useState((item.tags ?? []).join(", "))
 	const [saving, setSaving] = useState(false)
 	async function submit(event: React.FormEvent) {
 		event.preventDefault(); setSaving(true)
-		try { await updateDocumentMetadata(item.tsd_filename, filename.trim(), module, tags.split(",").map((tag) => tag.trim()).filter(Boolean)); saved() }
+		try { await updateDocumentMetadata(item.tsd_filename, filename.trim(), module, bank, tags.split(",").map((tag) => tag.trim()).filter(Boolean)); saved() }
 		catch (cause) { failed(cause instanceof Error ? cause.message : "Metadata gagal disimpan.") }
 		finally { setSaving(false) }
 	}
-	return <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close() }}><form onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="metadata-title" className="w-full max-w-lg border border-zinc-300 bg-white p-5 shadow-lg"><div className="flex items-start justify-between gap-4"><div><h2 id="metadata-title" className="font-semibold text-zinc-950">Edit identitas dokumen</h2><p className="mt-1 text-xs text-zinc-600">Perubahan nama pada sumber aktif akan memperbarui indeks.</p></div><button type="button" onClick={close} className="inline-flex size-8 items-center justify-center hover:bg-zinc-100" aria-label="Tutup"><X className="size-4" /></button></div><label className="mt-5 block text-sm font-medium text-zinc-800">Nama file<input value={filename} onChange={(event) => setFilename(event.target.value)} maxLength={185} pattern="[A-Za-z0-9][A-Za-z0-9._ -]*\\.docx" required className="mt-1 h-10 w-full border border-zinc-300 px-3 font-mono text-sm" /></label><label className="mt-4 block text-sm font-medium text-zinc-800">Modul<input value={module} onChange={(event) => setModule(event.target.value)} maxLength={40} required className="mt-1 h-10 w-full border border-zinc-300 px-3 font-mono text-sm" /></label><label className="mt-4 block text-sm font-medium text-zinc-800">Tag<span className="ml-1 font-normal text-zinc-500">pisahkan dengan koma</span><input value={tags} onChange={(event) => setTags(event.target.value)} className="mt-1 h-10 w-full border border-zinc-300 px-3 text-sm" placeholder="Urgent, Review" /></label><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={close} className="min-h-10 border border-zinc-300 px-4 hover:bg-zinc-100">Batal</button><button disabled={saving} className="min-h-10 bg-accent px-4 font-medium text-white hover:bg-blue-800 disabled:opacity-60">{saving ? "Menyimpan..." : "Simpan perubahan"}</button></div></form></div>
+	return <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close() }}><form onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="metadata-title" className="w-full max-w-lg border border-zinc-300 bg-white p-5 shadow-lg"><div className="flex items-start justify-between gap-4"><div><h2 id="metadata-title" className="font-semibold text-zinc-950">Edit identitas dokumen</h2><p className="mt-1 text-xs text-zinc-600">Perubahan identitas sumber aktif akan memperbarui indeks.</p></div><button type="button" onClick={close} className="inline-flex size-8 items-center justify-center hover:bg-zinc-100" aria-label="Tutup"><X className="size-4" /></button></div><label className="mt-5 block text-sm font-medium text-zinc-800">Nama file<input value={filename} onChange={(event) => setFilename(event.target.value)} maxLength={185} pattern="[A-Za-z0-9][A-Za-z0-9._ -]*\\.docx" required className="mt-1 h-10 w-full border border-zinc-300 px-3 font-mono text-sm" /></label><label className="mt-4 block text-sm font-medium text-zinc-800">Bank<input list="metadata-bank-options" value={bank} onChange={(event) => setBank(event.target.value)} maxLength={60} required className="mt-1 h-10 w-full border border-zinc-300 px-3 text-sm" /><datalist id="metadata-bank-options">{banks.map((value) => <option key={value} value={value} />)}</datalist></label><label className="mt-4 block text-sm font-medium text-zinc-800">Modul<input value={module} onChange={(event) => setModule(event.target.value)} maxLength={40} required className="mt-1 h-10 w-full border border-zinc-300 px-3 font-mono text-sm" /></label><label className="mt-4 block text-sm font-medium text-zinc-800">Tag<span className="ml-1 font-normal text-zinc-500">pisahkan dengan koma</span><input value={tags} onChange={(event) => setTags(event.target.value)} className="mt-1 h-10 w-full border border-zinc-300 px-3 text-sm" placeholder="Urgent, Review" /></label><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={close} className="min-h-10 border border-zinc-300 px-4 hover:bg-zinc-100">Batal</button><button disabled={saving} className="min-h-10 bg-accent px-4 font-medium text-white hover:bg-blue-800 disabled:opacity-60">{saving ? "Menyimpan..." : "Simpan perubahan"}</button></div></form></div>
 }
 
 function IconLink({ href, label, children, newTab = false }: { href: string; label: string; children: React.ReactNode; newTab?: boolean }) {

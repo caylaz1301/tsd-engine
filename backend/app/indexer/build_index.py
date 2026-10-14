@@ -29,6 +29,7 @@ from pathlib import Path
 PARSED_DIR = Path("storage/parsed")
 SQL_DIR = PARSED_DIR / "sql"
 DB_PATH = Path("storage/tsd_index.db")
+REGISTRY_PATH = Path("storage/documents/registry.json")
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -50,7 +51,8 @@ CREATE TABLE documents (
     procedure_count INTEGER,
     change_control  TEXT,
     warnings        TEXT,
-    indexed_at      TEXT
+    indexed_at      TEXT,
+    bank            TEXT
 );
 
 CREATE TABLE sql_sources (
@@ -130,6 +132,7 @@ CREATE TABLE sp_doc_occurrences (
     section_flow  TEXT,
     model_status  TEXT,
     flow_status   TEXT,
+    bank          TEXT,
     confidence    TEXT,
     explanation   TEXT
 );
@@ -174,9 +177,21 @@ def load_json_dir(d: Path) -> list[dict]:
     return out
 
 
+def load_document_banks() -> dict[str, str]:
+    try:
+        registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {
+        filename: record.get("bank") or "Belum ditentukan"
+        for filename, record in registry.get("documents", {}).items()
+    }
+
+
 def build() -> dict:
     docs = load_json_dir(PARSED_DIR)
     sqls = load_json_dir(SQL_DIR)
+    document_banks = load_document_banks()
 
     if not docs:
         print("Tidak ada hasil parser docx di %s." % PARSED_DIR)
@@ -227,10 +242,11 @@ def build() -> dict:
         fname = d["file"]
 
         con.execute(
-            "INSERT OR REPLACE INTO documents VALUES (?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO documents VALUES (?,?,?,?,?,?,?,?)",
             (fname, segment, None, d.get("procedure_count", 0),
              json.dumps(d.get("change_control", []), ensure_ascii=False),
-             json.dumps(d.get("warnings", []), ensure_ascii=False), ts),
+             json.dumps(d.get("warnings", []), ensure_ascii=False), ts,
+             document_banks.get(fname, "Belum ditentukan")),
         )
 
         specs = d.get("table_specs") or {}
@@ -263,10 +279,11 @@ def build() -> dict:
             # sementara sp_index tetap satu baris per SP agar hasil pencarian
             # tidak memunculkan entri kembar.
             con.execute(
-                "INSERT INTO sp_doc_occurrences VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO sp_doc_occurrences VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (key, p["sp_name"], segment, fname, p.get("heading_level"),
                  p.get("called_by"), dm.get("section"), df.get("section"),
                  dm.get("status", "missing"), df.get("status", "missing"),
+                 document_banks.get(fname, "Belum ditentukan"),
                  p.get("confidence"), expl or None),
             )
 

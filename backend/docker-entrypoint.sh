@@ -43,4 +43,12 @@ if [ ! -f /app/storage/.diagram-status-v1 ]; then
   touch /app/storage/.diagram-status-v1
 fi
 
+# Tambahkan metadata bank ke indeks lama tanpa menghapus dokumen atau laporan.
+if [ ! -f /app/storage/.bank-metadata-v1 ]; then
+  if find /app/storage/parsed -type f -name '*.json' | grep -q .; then
+    python app/indexer/build_index.py
+  fi
+  touch /app/storage/.bank-metadata-v1
+fi
+
 exec "$@"
