@@ -13,7 +13,7 @@ declare global {
 	}
 }
 
-export function DocumentEditor({ filename }: { filename: string }) {
+export function DocumentEditor({ filename, bank }: { filename: string; bank: string }) {
 	const editor = useRef<{ destroyEditor: () => void } | null>(null)
 	const [scriptReady, setScriptReady] = useState(false)
 	const [scriptUrl, setScriptUrl] = useState("")
@@ -30,7 +30,7 @@ export function DocumentEditor({ filename }: { filename: string }) {
 	useEffect(() => {
 		if (!scriptReady || !window.DocsAPI) return
 		let cancelled = false
-		getDocumentEditorConfig(filename)
+		getDocumentEditorConfig(filename, bank)
 			.then((config) => {
 				if (cancelled || !window.DocsAPI) return
 				editor.current = new window.DocsAPI.DocEditor("onlyoffice-editor", config)
@@ -41,7 +41,7 @@ export function DocumentEditor({ filename }: { filename: string }) {
 			editor.current?.destroyEditor()
 			editor.current = null
 		}
-	}, [filename, scriptReady])
+	}, [bank, filename, scriptReady])
 
 	return (
 		<>

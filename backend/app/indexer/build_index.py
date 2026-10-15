@@ -26,6 +26,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.banks import KNOWN_BANKS
+from app.source_paths import paths_for
+
 PARSED_DIR = Path("storage/parsed")
 SQL_DIR = PARSED_DIR / "sql"
 DB_PATH = Path("storage/tsd_index.db")
@@ -45,25 +48,31 @@ DROP TABLE IF EXISTS sp_fts;
 DROP TABLE IF EXISTS sp_doc_occurrences;
 
 CREATE TABLE documents (
-    tsd_filename    TEXT PRIMARY KEY,
+    document_key    TEXT PRIMARY KEY,
+    bank            TEXT NOT NULL,
+    tsd_filename    TEXT NOT NULL,
     segment         TEXT NOT NULL,
     sharepoint_url  TEXT,
     procedure_count INTEGER,
     change_control  TEXT,
     warnings        TEXT,
     indexed_at      TEXT,
-    bank            TEXT
+    UNIQUE(bank, tsd_filename)
 );
 
 CREATE TABLE sql_sources (
-    sql_file        TEXT PRIMARY KEY,
+    source_key      TEXT PRIMARY KEY,
+    bank            TEXT NOT NULL,
+    sql_file        TEXT NOT NULL,
     sql_database    TEXT,
     procedure_count INTEGER,
-    indexed_at      TEXT
+    indexed_at      TEXT,
+    UNIQUE(bank, sql_file)
 );
 
 CREATE TABLE sp_index (
     sp_key          TEXT PRIMARY KEY,
+    bank            TEXT NOT NULL,
     sp_name         TEXT NOT NULL,
     segment         TEXT,
     tsd_filename    TEXT,
@@ -106,6 +115,7 @@ CREATE TABLE sp_tables (
 );
 
 CREATE TABLE spec_tables (
+    bank        TEXT NOT NULL,
     segment     TEXT NOT NULL,
     category    TEXT NOT NULL,
     table_name  TEXT NOT NULL,
@@ -113,6 +123,7 @@ CREATE TABLE spec_tables (
 );
 
 CREATE TABLE spec_fields (
+    bank        TEXT NOT NULL,
     segment     TEXT NOT NULL,
     category    TEXT NOT NULL,
     table_name  TEXT NOT NULL,
@@ -140,6 +151,7 @@ CREATE TABLE sp_doc_occurrences (
 CREATE INDEX idx_occ_key      ON sp_doc_occurrences(sp_key);
 CREATE INDEX idx_occ_segment  ON sp_doc_occurrences(segment);
 CREATE INDEX idx_sp_segment   ON sp_index(segment);
+CREATE INDEX idx_sp_bank      ON sp_index(bank);
 CREATE INDEX idx_sp_status    ON sp_index(status);
 CREATE INDEX idx_sp_base      ON sp_index(base_name);
 CREATE INDEX idx_sp_variant   ON sp_index(variant);
@@ -148,6 +160,8 @@ CREATE INDEX idx_img_key      ON sp_images(sp_key);
 CREATE INDEX idx_tbl_key      ON sp_tables(sp_key);
 CREATE INDEX idx_tbl_name     ON sp_tables(table_name);
 CREATE INDEX idx_spec_segment ON spec_tables(segment);
+CREATE INDEX idx_documents_bank ON documents(bank);
+CREATE INDEX idx_sql_sources_bank ON sql_sources(bank);
 
 CREATE VIRTUAL TABLE sp_fts USING fts5(
     sp_key UNINDEXED,
@@ -177,21 +191,23 @@ def load_json_dir(d: Path) -> list[dict]:
     return out
 
 
-def load_document_banks() -> dict[str, str]:
-    try:
-        registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return {
-        filename: record.get("bank") or "Belum ditentukan"
-        for filename, record in registry.get("documents", {}).items()
-    }
+def load_sources() -> tuple[list[tuple[str, dict]], list[tuple[str, dict]]]:
+    """Baca sumber lama SCB dan namespace DBS/SMBCI tanpa mencampur identitas."""
+    documents: list[tuple[str, dict]] = []
+    sql_sources: list[tuple[str, dict]] = []
+    for bank in KNOWN_BANKS:
+        paths = paths_for(bank)
+        documents.extend((bank, item) for item in load_json_dir(paths.parsed_documents))
+        sql_sources.extend((bank, item) for item in load_json_dir(paths.parsed_sql))
+    return documents, sql_sources
+
+
+def scoped_key(bank: str, name: str) -> str:
+    return f"{bank.lower()}::{name.lower()}"
 
 
 def build() -> dict:
-    docs = load_json_dir(PARSED_DIR)
-    sqls = load_json_dir(SQL_DIR)
-    document_banks = load_document_banks()
+    docs, sqls = load_sources()
 
     if not docs:
         print("Tidak ada hasil parser docx di %s." % PARSED_DIR)
@@ -203,18 +219,19 @@ def build() -> dict:
     sql_map: dict[str, dict] = {}
     base_map: dict[str, list[str]] = {}
     sql_dupes: dict[str, int] = {}
-    for s in sqls:
+    for bank, s in sqls:
         for p in s["procedures"]:
-            k = p["sp_name_lower"]
+            k = scoped_key(bank, p["sp_name_lower"])
             if k in sql_map:
                 sql_dupes[k] = sql_dupes.get(k, 1) + 1
                 continue
             rec = dict(p)
             rec["_file"] = s["file"]
             rec["_db"] = s.get("database")
+            rec["_bank"] = bank
             sql_map[k] = rec
             base_map.setdefault(
-                (p.get("base_name") or p["sp_name"]).lower(), []
+                scoped_key(bank, p.get("base_name") or p["sp_name"]), []
             ).append(k)
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -225,10 +242,10 @@ def build() -> dict:
 
     ts = now()
 
-    for source in sqls:
+    for bank, source in sqls:
         con.execute(
-            "INSERT INTO sql_sources VALUES (?,?,?,?)",
-            (source["file"], source.get("database"),
+            "INSERT INTO sql_sources VALUES (?,?,?,?,?,?)",
+            (f"{bank}::{source['file']}", bank, source["file"], source.get("database"),
              source.get("procedure_count", 0), ts),
         )
 
@@ -237,35 +254,34 @@ def build() -> dict:
     stats = {"matched": 0, "doc_only": 0, "sql_only": 0, "sql_variant": 0,
              "images": 0, "fields": 0, "doc_dupes": 0}
 
-    for d in docs:
+    for bank, d in docs:
         segment = d["segment"]
         fname = d["file"]
 
         con.execute(
-            "INSERT OR REPLACE INTO documents VALUES (?,?,?,?,?,?,?,?)",
-            (fname, segment, None, d.get("procedure_count", 0),
+            "INSERT OR REPLACE INTO documents VALUES (?,?,?,?,?,?,?,?,?)",
+            (f"{bank}::{fname}", bank, fname, segment, None, d.get("procedure_count", 0),
              json.dumps(d.get("change_control", []), ensure_ascii=False),
-             json.dumps(d.get("warnings", []), ensure_ascii=False), ts,
-             document_banks.get(fname, "Belum ditentukan")),
+             json.dumps(d.get("warnings", []), ensure_ascii=False), ts),
         )
 
         specs = d.get("table_specs") or {}
         for category, block in specs.items():
             for t in (block or {}).get("tables", []):
                 con.execute(
-                    "INSERT INTO spec_tables VALUES (?,?,?,?)",
-                    (segment, category, t["table_name"], t.get("field_count", 0)),
+                    "INSERT INTO spec_tables VALUES (?,?,?,?,?)",
+                    (bank, segment, category, t["table_name"], t.get("field_count", 0)),
                 )
                 for fl in t.get("fields", []):
                     con.execute(
-                        "INSERT INTO spec_fields VALUES (?,?,?,?,?,?)",
-                        (segment, category, t["table_name"], fl.get("field"),
+                        "INSERT INTO spec_fields VALUES (?,?,?,?,?,?,?)",
+                        (bank, segment, category, t["table_name"], fl.get("field"),
                          fl.get("type"), fl.get("description")),
                     )
                     stats["fields"] += 1
 
         for p in d["procedures"]:
-            key = p["sp_name_lower"]
+            key = scoped_key(bank, p["sp_name_lower"])
             seen_doc_keys.add(key)
 
             dm = p.get("data_model") or {}
@@ -283,7 +299,7 @@ def build() -> dict:
                 (key, p["sp_name"], segment, fname, p.get("heading_level"),
                  p.get("called_by"), dm.get("section"), df.get("section"),
                  dm.get("status", "missing"), df.get("status", "missing"),
-                 document_banks.get(fname, "Belum ditentukan"),
+                 bank,
                  p.get("confidence"), expl or None),
             )
 
@@ -313,9 +329,9 @@ def build() -> dict:
 
             con.execute(
                 "INSERT OR REPLACE INTO sp_index VALUES "
-                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    key, p["sp_name"], segment, fname, None,
+                    key, bank, p["sp_name"], segment, fname, None,
                     p.get("heading_level"), p.get("called_by"),
                     dm.get("section"), df.get("section"), expl or None,
                     p.get("confidence"),
@@ -357,9 +373,9 @@ def build() -> dict:
         stats[st] += 1
         con.execute(
             "INSERT OR REPLACE INTO sp_index VALUES "
-            "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
-                key, sq["sp_name"], None, None, None, None, None, None, None,
+                key, sq["_bank"], sq["sp_name"], None, None, None, None, None, None, None,
                 None, None, sq["_file"], sq["_db"], sq["line"],
                 sq["body_lines"], sq["param_count"],
                 json.dumps(sq["parameters"], ensure_ascii=False),

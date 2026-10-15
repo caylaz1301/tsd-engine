@@ -18,6 +18,7 @@ import requests
 
 from app.documents import repository
 from app.indexer.ingest import MAX_FILE_BYTES
+from app.source_paths import paths_for
 
 
 JWT_SECRET = os.getenv("ONLYOFFICE_JWT_SECRET", "change-this-onlyoffice-secret")
@@ -55,14 +56,15 @@ def decode_token(token: str) -> dict[str, Any]:
         raise ValueError("Token editor tidak valid.") from exc
 
 
-def editor_config(filename: str) -> dict[str, Any]:
-    path, status = repository.document_path(filename)
+def editor_config(filename: str, bank: str = "SCB") -> dict[str, Any]:
+    path, status = repository.document_path(filename, bank)
     if status != "active":
         raise ValueError("Dokumen harus aktif sebelum dapat diedit.")
     version = f"editor-v2:{path.name}:{path.stat().st_size}:{path.stat().st_mtime_ns}"
     key = hashlib.sha256(version.encode()).hexdigest()[:40]
     source_token = encode_token({
         "filename": path.name,
+        "bank": bank,
         "purpose": "editor-source",
         "exp": int(time.time()) + 6 * 60 * 60,
     })
@@ -77,7 +79,7 @@ def editor_config(filename: str) -> dict[str, Any]:
             "title": path.name,
             "url": (
                 f"{BACKEND_INTERNAL_URL}/api/documents/{quote(path.name, safe='')}/editor-source"
-                f"?access_token={source_token}"
+                f"?access_token={source_token}&bank={quote(bank, safe='')}"
             ),
             "permissions": {
                 "edit": True,
@@ -87,7 +89,7 @@ def editor_config(filename: str) -> dict[str, Any]:
             },
         },
         "editorConfig": {
-            "callbackUrl": f"{BACKEND_INTERNAL_URL}/api/documents/{quote(path.name, safe='')}/editor-callback",
+            "callbackUrl": f"{BACKEND_INTERNAL_URL}/api/documents/{quote(path.name, safe='')}/editor-callback?bank={quote(bank, safe='')}",
             "lang": "id",
             "mode": "edit",
             "user": {"id": "local-user", "name": "Pengguna TSD Engine"},
@@ -102,14 +104,15 @@ def editor_config(filename: str) -> dict[str, Any]:
     return config
 
 
-def validate_source_token(filename: str, token: str) -> None:
+def validate_source_token(filename: str, token: str, bank: str = "SCB") -> None:
     payload = decode_token(token)
-    if payload.get("purpose") != "editor-source" or payload.get("filename") != Path(filename).name:
+    if payload.get("purpose") != "editor-source" or payload.get("filename") != Path(filename).name or payload.get("bank") != bank:
         raise ValueError("Token tidak berlaku untuk dokumen ini.")
 
 
 def save_callback(
-    filename: str, payload: dict[str, Any], callback_token: str | None = None
+    filename: str, payload: dict[str, Any], callback_token: str | None = None,
+    bank: str = "SCB",
 ) -> dict[str, int]:
     token = payload.get("token") or callback_token
     if not isinstance(token, str):
@@ -127,7 +130,7 @@ def save_callback(
 
     response = requests.get(download_url, stream=True, timeout=(10, 180))
     response.raise_for_status()
-    temp = repository.ACTIVE_DIR / f".{Path(filename).name}.onlyoffice.tmp"
+    temp = paths_for(bank).ensure().documents / f".{Path(filename).name}.onlyoffice.tmp"
     size = 0
     try:
         with temp.open("wb") as output:
@@ -136,7 +139,7 @@ def save_callback(
                 if size > MAX_FILE_BYTES:
                     raise ValueError("Dokumen hasil edit melebihi batas 30 MB.")
                 output.write(chunk)
-        repository.replace_from_editor(filename, temp)
+        repository.replace_from_editor(filename, temp, bank)
     finally:
         temp.unlink(missing_ok=True)
     return {"error": 0}

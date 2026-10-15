@@ -2,18 +2,21 @@ import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ArrowLeft, Download, ExternalLink, FilePenLine, FileText } from "lucide-react"
 import { documentDownloadUrl, documentPdfUrl, getDocumentPreview } from "@/lib/api"
+import { getSelectedBank } from "@/lib/bank-context"
 
 export const dynamic = "force-dynamic"
 
 export default async function DocumentPage({ params }: { params: Promise<{ filename: string }> }) {
 	const { filename } = await params
+	const selectedBank = await getSelectedBank()
 	let document
 	try {
-		document = await getDocumentPreview(decodeURIComponent(filename), 0, 20)
+		document = await getDocumentPreview(decodeURIComponent(filename), selectedBank, 0, 20)
 	} catch {
 		notFound()
 	}
-	const pdfUrl = documentPdfUrl(document.filename)
+	if (document.bank !== selectedBank) notFound()
+	const pdfUrl = documentPdfUrl(document.filename, selectedBank)
 
 	return (
 		<div className="flex flex-col gap-5">
@@ -26,8 +29,8 @@ export default async function DocumentPage({ params }: { params: Promise<{ filen
 				</div>
 				<div className="flex flex-wrap gap-2">
 					<a href={pdfUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100"><ExternalLink className="size-4" />Buka tab baru</a>
-					<a href={documentPdfUrl(document.filename, true)} className="inline-flex min-h-10 items-center gap-2 border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100"><Download className="size-4" />PDF</a>
-					<a href={documentDownloadUrl(document.filename, document.modified_at)} className="inline-flex min-h-10 items-center gap-2 border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100"><FileText className="size-4" />DOCX</a>
+					<a href={documentPdfUrl(document.filename, selectedBank, true)} className="inline-flex min-h-10 items-center gap-2 border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100"><Download className="size-4" />PDF</a>
+					<a href={documentDownloadUrl(document.filename, selectedBank, document.modified_at)} className="inline-flex min-h-10 items-center gap-2 border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100"><FileText className="size-4" />DOCX</a>
 					<Link href={`/documents/${encodeURIComponent(document.filename)}/edit`} className="inline-flex min-h-10 items-center gap-2 bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-blue-800"><FilePenLine className="size-4" />Edit dokumen</Link>
 				</div>
 			</header>

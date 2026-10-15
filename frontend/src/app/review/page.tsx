@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { AlertTriangle, ArrowUpRight, Files } from "lucide-react"
 import { getReview, type ReviewRow, type SpStatus } from "@/lib/api"
+import { getSelectedBank } from "@/lib/bank-context"
 import { num } from "@/lib/utils"
 import {
 	ErrorPanel,
@@ -90,9 +91,10 @@ function ReviewList({
 }
 
 export default async function ReviewPage() {
+	const bank = await getSelectedBank()
 	let review
 	try {
-		review = await getReview(12)
+		review = await getReview(12, bank)
 	} catch (e) {
 		return (
 			<ErrorPanel

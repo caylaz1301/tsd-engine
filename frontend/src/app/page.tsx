@@ -3,13 +3,15 @@ import { ArrowRight, CheckCircle2, FileSearch, ShieldCheck } from "lucide-react"
 import { ErrorPanel } from "@/components/ui"
 import { getStats, type Stats } from "@/lib/api"
 import { num } from "@/lib/utils"
+import { getSelectedBank } from "@/lib/bank-context"
 
 export const dynamic = "force-dynamic"
 
 export default async function HomePage() {
 	let stats: Stats
+	const selectedBank = await getSelectedBank()
 	try {
-		stats = await getStats()
+		stats = await getStats(selectedBank)
 	} catch (e) {
 		return <ErrorPanel title="Indeks tidak bisa dibaca" detail={e instanceof Error ? e.message : String(e)} />
 	}
@@ -19,21 +21,27 @@ export default async function HomePage() {
 	const primary = Math.max(0, stats.totals.sp_total - variants)
 	const coverage = primary ? Math.round(matched / primary * 1000) / 10 : 0
 	const quality = stats.quality
+	if (stats.totals.sql_files === 0) {
+		return <div className="flex flex-col gap-6">
+			<header className="border-b border-zinc-200 pb-5"><h1 className="text-xl font-semibold text-zinc-950">Ringkasan {selectedBank}</h1><p className="mt-1 text-zinc-600">{stats.totals.documents} dokumen TSD tersedia.</p></header>
+			<section className="border border-zinc-200 bg-white p-5 sm:p-6"><h2 className="font-semibold text-zinc-950">Belum ada skrip SQL untuk {selectedBank}</h2><p className="mt-2 max-w-[65ch] text-sm leading-6 text-zinc-600">Cakupan stored procedure akan tersedia setelah sumber SQL bank ini ditambahkan melalui halaman pengelolaan.</p><Link href="/admin/sources" className="mt-5 inline-flex min-h-10 items-center gap-2 bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800">Kelola sumber {selectedBank}<ArrowRight className="size-4" aria-hidden /></Link></section>
+		</div>
+	}
 
 	return (
 		<div className="flex flex-col gap-6">
 			<header className="flex flex-col gap-3 border-b border-zinc-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
 				<div>
 					<h1 className="text-xl font-semibold text-zinc-950">Ringkasan sumber TSD</h1>
-					<p className="mt-1 max-w-[72ch] text-zinc-600">Gambaran berdasarkan sumber yang tersedia saat ini, bukan keseluruhan database perusahaan.</p>
+					<p className="mt-1 max-w-[72ch] text-zinc-600">Gambaran berdasarkan sumber {selectedBank ? `untuk ${selectedBank}` : "dari seluruh bank"} yang tersedia saat ini, bukan keseluruhan database perusahaan.</p>
 				</div>
-				<p className="text-sm text-zinc-600"><span className="font-mono text-zinc-900">{stats.totals.documents}</span> dokumen · <span className="font-mono text-zinc-900">{stats.totals.sql_files}</span> skrip SQL</p>
+				<p className="text-sm text-zinc-600"><span className="font-mono text-zinc-900">{stats.totals.documents}</span> dokumen{selectedBank ? null : <> · <span className="font-mono text-zinc-900">{stats.totals.sql_files}</span> skrip SQL</>}</p>
 			</header>
 
 			<section className="grid border border-zinc-200 bg-white lg:grid-cols-2">
 				<div className="border-b border-zinc-200 p-5 lg:border-r lg:border-b-0 sm:p-6">
 					<div className="flex items-start justify-between gap-4">
-						<div><h2 className="flex items-center gap-2 font-semibold text-zinc-950"><FileSearch className="size-5 text-blue-700" aria-hidden />Cakupan stored procedure</h2><p className="mt-1 text-sm text-zinc-600">SP utama yang sudah cocok dengan dokumen TSD.</p></div>
+						<div><h2 className="flex items-center gap-2 font-semibold text-zinc-950"><FileSearch className="size-5 text-blue-700" aria-hidden />Cakupan stored procedure</h2><p className="mt-1 text-sm text-zinc-600">SP utama yang sudah cocok dengan dokumen TSD{selectedBank ? " bank ini" : ""}.</p></div>
 						<span className="font-mono text-2xl font-semibold text-blue-700 tabular-nums">{coverage}%</span>
 					</div>
 					<div className="mt-6 h-3 overflow-hidden bg-zinc-200" role="img" aria-label={`${coverage}% SP utama memiliki dokumen TSD`}><div className="h-full bg-blue-700 transition-[width] duration-200 motion-reduce:transition-none" style={{ width: `${coverage}%` }} /></div>
@@ -48,13 +56,13 @@ export default async function HomePage() {
 					</div>
 					<div className="mt-6 h-3 overflow-hidden bg-zinc-200" role="img" aria-label={`${quality.pass_rate}% pemeriksaan memperoleh skor 100%`}><div className="h-full bg-emerald-700 transition-[width] duration-200 motion-reduce:transition-none" style={{ width: `${quality.pass_rate}%` }} /></div>
 					<p className="mt-3 text-sm text-zinc-700"><strong className="font-mono font-semibold text-zinc-950">{quality.passed}</strong> dari <span className="font-mono text-zinc-950">{quality.reports}</span> pemeriksaan mencapai 100%.</p>
-					<Link href="/segments" className="mt-5 inline-flex min-h-10 items-center gap-2 border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100">Buka quality checker<ArrowRight className="size-4" aria-hidden /></Link>
+						<Link href="/segments#quality-checker" className="mt-5 inline-flex min-h-10 items-center gap-2 border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100">Buka quality checker<ArrowRight className="size-4" aria-hidden /></Link>
 				</div>
 			</section>
 
 			<section className="border border-zinc-200 bg-white p-5 sm:p-6">
 				<div className="flex flex-col gap-2 border-b border-zinc-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
-					<div><h2 className="font-semibold text-zinc-950">Cakupan TSD per modul</h2><p className="mt-1 text-sm text-zinc-600">Bagian berwarna menunjukkan proporsi SP utama yang telah cocok dengan TSD.</p></div>
+					<div><h2 className="font-semibold text-zinc-950">Cakupan TSD per modul</h2><p className="mt-1 text-sm text-zinc-600">Bagian berwarna menunjukkan proporsi SP utama yang telah cocok dengan TSD{selectedBank ? " bank aktif" : ""}.</p></div>
 					<div className="flex items-center gap-4 text-xs text-zinc-600"><span className="flex items-center gap-1.5"><i className="size-2.5 bg-blue-700" />Ada TSD</span><span className="flex items-center gap-1.5"><i className="size-2.5 bg-zinc-200" />Belum cocok</span></div>
 				</div>
 				<div className="mt-5 space-y-4">

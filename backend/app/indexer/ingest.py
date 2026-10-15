@@ -13,6 +13,7 @@ from pathlib import Path
 
 from app.indexer import build_index
 from app.parsers import docx_parser
+from app.source_paths import paths_for
 
 SAMPLES_DIR = Path("samples")
 PARSED_DIR = Path("storage/parsed")
@@ -65,7 +66,12 @@ def validate_docx(path: Path) -> None:
         ) from exc
 
 
-def ingest_document(temp_path: Path, filename: str, replace: bool = False) -> dict:
+def ingest_document(
+    temp_path: Path,
+    filename: str,
+    replace: bool = False,
+    bank: str = "SCB",
+) -> dict:
     """Pindahkan unggahan tervalidasi, parse, lalu bangun ulang indeks."""
     name = validate_filename(filename)
     if temp_path.stat().st_size == 0:
@@ -74,9 +80,8 @@ def ingest_document(temp_path: Path, filename: str, replace: bool = False) -> di
         raise UploadValidationError("Ukuran file melebihi batas 30 MB.")
     validate_docx(temp_path)
 
-    SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
-    PARSED_DIR.mkdir(parents=True, exist_ok=True)
-    destination = SAMPLES_DIR / name
+    paths = paths_for(bank).ensure()
+    destination = paths.documents / name
     if destination.exists() and not replace:
         raise DuplicateDocumentError(
             "Dokumen dengan nama yang sama sudah ada. Aktifkan pilihan ganti file untuk memperbaruinya."
@@ -84,7 +89,7 @@ def ingest_document(temp_path: Path, filename: str, replace: bool = False) -> di
 
     backup = None
     parsed_backup = None
-    parsed_path = PARSED_DIR / f"{destination.stem}.json"
+    parsed_path = paths.parsed_documents / f"{destination.stem}.json"
     with _index_lock:
         try:
             if destination.exists():
@@ -98,7 +103,13 @@ def ingest_document(temp_path: Path, filename: str, replace: bool = False) -> di
             # Staging dan samples berada pada volume Docker yang berbeda.
             shutil.move(str(temp_path), destination)
 
-            parsed = docx_parser.parse(destination, IMAGES_DIR)
+            parsed = docx_parser.parse(destination, paths.images)
+            if paths.bank != "SCB":
+                for procedure in parsed.get("procedures", []):
+                    for block_name in ("data_model", "data_flow"):
+                        block = procedure.get(block_name) or {}
+                        for image in block.get("images", []):
+                            image["path"] = f"{paths.bank}/{image['path']}"
             parsed_path.write_text(
                 json.dumps(parsed, indent=2, ensure_ascii=False), encoding="utf-8"
             )

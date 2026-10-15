@@ -68,7 +68,7 @@ SEARCH_SQL = """
 SELECT i.sp_key, i.sp_name, i.segment, i.tsd_filename, i.status,
        i.confidence, i.variant, i.base_name, i.sql_database, i.sql_file,
        i.body_lines, i.param_count, i.called_by,
-       (SELECT GROUP_CONCAT(DISTINCT o.bank) FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key) AS bank,
+       i.bank,
        (SELECT COUNT(*) FROM sp_images m WHERE m.sp_key = i.sp_key) AS image_count,
        bm25(sp_fts) AS score
 FROM sp_fts f
@@ -77,7 +77,7 @@ WHERE sp_fts MATCH :match
   AND (:status   IS NULL OR i.status  = :status)
   AND (:segment  IS NULL OR i.segment = :segment)
   AND (:module   IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
-  AND (:bank IS NULL OR EXISTS (SELECT 1 FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key AND o.bank = :bank))
+  AND (:bank IS NULL OR i.bank = :bank)
   AND (:hide_variants = 0 OR i.variant IS NULL)
 ORDER BY (LOWER(i.sp_name) = LOWER(:raw)) DESC,
          (i.status = 'matched') DESC,
@@ -94,7 +94,7 @@ WHERE sp_fts MATCH :match
   AND (:status  IS NULL OR i.status  = :status)
   AND (:segment IS NULL OR i.segment = :segment)
   AND (:module  IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
-  AND (:bank IS NULL OR EXISTS (SELECT 1 FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key AND o.bank = :bank))
+  AND (:bank IS NULL OR i.bank = :bank)
   AND (:hide_variants = 0 OR i.variant IS NULL)
 """
 
@@ -102,14 +102,14 @@ BROWSE_SQL = """
 SELECT i.sp_key, i.sp_name, i.segment, i.tsd_filename, i.status,
        i.confidence, i.variant, i.base_name, i.sql_database, i.sql_file,
        i.body_lines, i.param_count, i.called_by,
-       (SELECT GROUP_CONCAT(DISTINCT o.bank) FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key) AS bank,
+       i.bank,
        (SELECT COUNT(*) FROM sp_images m WHERE m.sp_key = i.sp_key) AS image_count,
        0.0 AS score
 FROM sp_index i
 WHERE (:status IS NULL OR i.status = :status)
   AND (:segment IS NULL OR i.segment = :segment)
   AND (:module IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
-  AND (:bank IS NULL OR EXISTS (SELECT 1 FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key AND o.bank = :bank))
+  AND (:bank IS NULL OR i.bank = :bank)
   AND (:hide_variants = 0 OR i.variant IS NULL)
 ORDER BY (i.status = 'matched') DESC, i.sp_name
 LIMIT :limit OFFSET :offset
@@ -120,7 +120,7 @@ SELECT COUNT(*) FROM sp_index i
 WHERE (:status IS NULL OR i.status = :status)
   AND (:segment IS NULL OR i.segment = :segment)
   AND (:module IS NULL OR infer_module(i.segment, i.sql_database, i.sp_name) = :module)
-  AND (:bank IS NULL OR EXISTS (SELECT 1 FROM sp_doc_occurrences o WHERE o.sp_key = i.sp_key AND o.bank = :bank))
+  AND (:bank IS NULL OR i.bank = :bank)
   AND (:hide_variants = 0 OR i.variant IS NULL)
 """
 
@@ -160,12 +160,13 @@ def search(
     return {"total": total, "results": rows, "query": q}
 
 
-def get_sp(name: str) -> dict[str, Any] | None:
+def get_sp(name: str, bank: str = "SCB") -> dict[str, Any] | None:
     """Detail satu SP beserta diagram, tabel, pemanggil, dan salinan arsipnya."""
     con = connect()
     try:
         row = con.execute(
-            "SELECT * FROM sp_index WHERE sp_key = LOWER(?)", (name,)
+            "SELECT * FROM sp_index WHERE bank = ? AND LOWER(sp_name) = LOWER(?)",
+            (bank, name),
         ).fetchone()
         if row is None:
             return None
@@ -203,21 +204,21 @@ def get_sp(name: str) -> dict[str, Any] | None:
         # SP lain yang menurut dokumen dipanggil OLEH SP ini.
         sp["calls_documented"] = rows_to_dicts(con.execute(
             "SELECT sp_name, segment FROM sp_index "
-            "WHERE LOWER(called_by) = LOWER(?) ORDER BY sp_name",
-            (sp["sp_name"],)
+            "WHERE bank = ? AND LOWER(called_by) = LOWER(?) ORDER BY sp_name",
+            (bank, sp["sp_name"])
         ).fetchall())
 
         sp["archive_copies"] = rows_to_dicts(con.execute(
             "SELECT sp_name, variant, sql_database, body_lines FROM sp_index "
-            "WHERE status = 'sql_variant' AND LOWER(base_name) = LOWER(?) "
-            "ORDER BY sp_name", (sp["base_name"] or sp["sp_name"],)
+            "WHERE bank = ? AND status = 'sql_variant' AND LOWER(base_name) = LOWER(?) "
+            "ORDER BY sp_name", (bank, sp["base_name"] or sp["sp_name"])
         ).fetchall())
 
         if sp.get("tsd_filename"):
             doc = con.execute(
                 "SELECT tsd_filename, segment, sharepoint_url, "
-                "procedure_count, bank FROM documents WHERE tsd_filename = ?",
-                (sp["tsd_filename"],)
+                "procedure_count, bank FROM documents WHERE bank = ? AND tsd_filename = ?",
+                (bank, sp["tsd_filename"])
             ).fetchone()
             sp["document"] = dict(doc) if doc else None
         else:
@@ -247,14 +248,23 @@ def _documented_tables(explanation: str) -> dict[str, list[dict[str, Any]]]:
     return result
 
 
-def stats() -> dict[str, Any]:
+def stats(bank: str | None = None) -> dict[str, Any]:
     con = connect()
     try:
-        by_status = {
-            r["status"]: r["c"] for r in con.execute(
-                "SELECT status, COUNT(*) c FROM sp_index GROUP BY status"
-            )
-        }
+        if bank:
+            by_status = {
+                r["status"]: r["c"] for r in con.execute(
+                    "SELECT i.status, COUNT(*) c FROM sp_index i WHERE i.bank = ? "
+                    "GROUP BY i.status",
+                    (bank,),
+                )
+            }
+        else:
+            by_status = {
+                r["status"]: r["c"] for r in con.execute(
+                    "SELECT status, COUNT(*) c FROM sp_index GROUP BY status"
+                )
+            }
         # Dihitung dari sp_doc_occurrences supaya SP yang muncul di dua
         # TSD tetap terhitung di kedua segment.
         segments = rows_to_dicts(con.execute(
@@ -263,37 +273,48 @@ def stats() -> dict[str, Any]:
             "SUM(o.confidence = 'low') low_confidence "
             "FROM sp_doc_occurrences o "
             "JOIN sp_index i ON i.sp_key = o.sp_key "
-            "GROUP BY o.segment ORDER BY total DESC"
+            "WHERE (? IS NULL OR o.bank = ?) "
+            "GROUP BY o.segment ORDER BY total DESC",
+            (bank, bank),
         ).fetchall())
-        totals = con.execute(
+        totals = dict(con.execute(
             "SELECT COUNT(*) sp_total, "
-            "(SELECT COUNT(*) FROM sp_images) images, "
-            "(SELECT COUNT(*) FROM spec_fields) spec_fields, "
-            "(SELECT COUNT(*) FROM documents) documents, "
-            "(SELECT COUNT(*) FROM sql_sources) sql_files "
-            "FROM sp_index"
-        ).fetchone()
+            "(SELECT COUNT(*) FROM sp_images m JOIN sp_index x ON x.sp_key=m.sp_key WHERE (? IS NULL OR x.bank=?)) images, "
+            "(SELECT COUNT(*) FROM spec_fields WHERE (? IS NULL OR bank=?)) spec_fields, "
+            "(SELECT COUNT(*) FROM documents WHERE (? IS NULL OR bank = ?)) documents, "
+            "(SELECT COUNT(*) FROM sql_sources WHERE (? IS NULL OR bank=?)) sql_files "
+            "FROM sp_index WHERE (? IS NULL OR bank=?)",
+            (bank, bank, bank, bank, bank, bank, bank, bank, bank, bank),
+        ).fetchone())
         hot_tables = rows_to_dicts(con.execute(
             "SELECT table_name, COUNT(DISTINCT sp_key) sp_count FROM sp_tables "
-            "GROUP BY LOWER(table_name) ORDER BY sp_count DESC LIMIT 15"
+            "WHERE (? IS NULL OR sp_key IN (SELECT sp_key FROM sp_index WHERE bank=?)) "
+            "GROUP BY LOWER(table_name) ORDER BY sp_count DESC LIMIT 15",
+            (bank, bank),
         ).fetchall())
         most_copied = rows_to_dicts(con.execute(
             "SELECT base_name, COUNT(*) copies FROM sp_index "
-            "WHERE status = 'sql_variant' "
-            "GROUP BY LOWER(base_name) ORDER BY copies DESC LIMIT 15"
+            "WHERE status = 'sql_variant' AND (? IS NULL OR bank=?) "
+            "GROUP BY LOWER(base_name) ORDER BY copies DESC LIMIT 15",
+            (bank, bank),
         ).fetchall())
         module_stats: dict[str, dict[str, Any]] = {}
-        for row in con.execute("SELECT segment, sql_database, sp_name, status, variant FROM sp_index"):
+        for row in con.execute(
+            "SELECT sp_key, segment, sql_database, sp_name, status, variant "
+            "FROM sp_index WHERE (? IS NULL OR bank=?)",
+            (bank, bank),
+        ):
             if row["variant"]:
                 continue
             module = infer_module(row["segment"], row["sql_database"], row["sp_name"])
             item = module_stats.setdefault(module, {"module": module, "total": 0, "matched": 0, "sql_only": 0})
             item["total"] += 1
-            if row["status"] == "matched": item["matched"] += 1
+            if row["status"] == "matched":
+                item["matched"] += 1
             if row["status"] == "sql_only": item["sql_only"] += 1
         return {
             "by_status": by_status,
-            "totals": dict(totals),
+            "totals": totals,
             "segments": segments,
             "hot_tables": hot_tables,
             "most_copied": most_copied,
@@ -303,16 +324,17 @@ def stats() -> dict[str, Any]:
         con.close()
 
 
-def list_segments() -> list[dict[str, Any]]:
+def list_segments(bank: str | None = None) -> list[dict[str, Any]]:
     con = connect()
     try:
         rows = rows_to_dicts(con.execute(
             "SELECT d.tsd_filename, d.segment, d.procedure_count, "
             "d.sharepoint_url, d.bank, "
             "(SELECT COUNT(*) FROM sp_index i "
-            "  WHERE i.tsd_filename = d.tsd_filename "
+            "  WHERE i.bank = d.bank AND i.tsd_filename = d.tsd_filename "
             "    AND i.status = 'matched') indexed_sp "
-            "FROM documents d ORDER BY d.segment"
+            "FROM documents d WHERE (? IS NULL OR d.bank=?) ORDER BY d.segment",
+            (bank, bank),
         ).fetchall())
         for row in rows:
             row["module"] = infer_module(row.get("segment"))
@@ -322,11 +344,13 @@ def list_segments() -> list[dict[str, Any]]:
         con.close()
 
 
-def list_modules() -> list[dict[str, Any]]:
+def list_modules(bank: str | None = None) -> list[dict[str, Any]]:
     con = connect()
     try:
         rows = con.execute(
-            "SELECT segment, sql_database, sp_name FROM sp_index WHERE variant IS NULL"
+            "SELECT segment, sql_database, sp_name FROM sp_index "
+            "WHERE variant IS NULL AND (? IS NULL OR bank=?)",
+            (bank, bank),
         ).fetchall()
         counts: dict[str, int] = {}
         for row in rows:
@@ -337,26 +361,29 @@ def list_modules() -> list[dict[str, Any]]:
         con.close()
 
 
-def review_items(limit: int = 12) -> dict[str, Any]:
+def review_items(limit: int = 12, bank: str | None = None) -> dict[str, Any]:
     """Kumpulan item yang paling layak ditinjau dari indeks saat ini."""
     con = connect()
     try:
         sql_only_total = con.execute(
             "SELECT COUNT(*) FROM sp_index "
-            "WHERE status = 'sql_only' AND variant IS NULL"
+            "WHERE status = 'sql_only' AND variant IS NULL AND (? IS NULL OR bank=?)",
+            (bank, bank),
         ).fetchone()[0]
         doc_only_total = con.execute(
-            "SELECT COUNT(*) FROM sp_index WHERE status = 'doc_only'"
+            "SELECT COUNT(*) FROM sp_index WHERE status = 'doc_only' AND (? IS NULL OR bank=?)",
+            (bank, bank),
         ).fetchone()[0]
         low_confidence_total = con.execute(
             "SELECT COUNT(DISTINCT sp_key) FROM sp_doc_occurrences "
-            "WHERE confidence = 'low'"
+            "WHERE confidence = 'low' AND (? IS NULL OR bank=?)",
+            (bank, bank),
         ).fetchone()[0]
         multi_doc_total = con.execute(
             "SELECT COUNT(*) FROM ("
             "  SELECT sp_key FROM sp_doc_occurrences "
-            "  GROUP BY sp_key HAVING COUNT(DISTINCT tsd_filename) > 1"
-            ")"
+            "  WHERE (? IS NULL OR bank=?) GROUP BY sp_key HAVING COUNT(DISTINCT tsd_filename) > 1"
+            ")", (bank, bank)
         ).fetchone()[0]
 
         sql_only = rows_to_dicts(con.execute(
@@ -364,9 +391,9 @@ def review_items(limit: int = 12) -> dict[str, Any]:
             "variant, base_name, sql_database, sql_file, body_lines, param_count, "
             "called_by, 0 AS image_count "
             "FROM sp_index "
-            "WHERE status = 'sql_only' AND variant IS NULL "
+            "WHERE status = 'sql_only' AND variant IS NULL AND (? IS NULL OR bank=?) "
             "ORDER BY body_lines DESC, sp_name LIMIT ?",
-            (limit,),
+            (bank, bank, limit),
         ).fetchall())
         doc_only = rows_to_dicts(con.execute(
             "SELECT sp_key, sp_name, segment, tsd_filename, status, confidence, "
@@ -374,9 +401,9 @@ def review_items(limit: int = 12) -> dict[str, Any]:
             "called_by, "
             "(SELECT COUNT(*) FROM sp_images m WHERE m.sp_key = i.sp_key) image_count "
             "FROM sp_index i "
-            "WHERE status = 'doc_only' "
+            "WHERE status = 'doc_only' AND (? IS NULL OR bank=?) "
             "ORDER BY segment, sp_name LIMIT ?",
-            (limit,),
+            (bank, bank, limit),
         ).fetchall())
         low_confidence = rows_to_dicts(con.execute(
             "SELECT i.sp_key, i.sp_name, i.segment, i.tsd_filename, i.status, "
@@ -386,10 +413,10 @@ def review_items(limit: int = 12) -> dict[str, Any]:
             "GROUP_CONCAT(DISTINCT o.segment) AS segments "
             "FROM sp_doc_occurrences o "
             "JOIN sp_index i ON i.sp_key = o.sp_key "
-            "WHERE o.confidence = 'low' "
+            "WHERE o.confidence = 'low' AND (? IS NULL OR o.bank=?) "
             "GROUP BY i.sp_key "
             "ORDER BY i.segment, i.sp_name LIMIT ?",
-            (limit,),
+            (bank, bank, limit),
         ).fetchall())
         multi_doc = rows_to_dicts(con.execute(
             "SELECT i.sp_key, i.sp_name, i.segment, i.tsd_filename, i.status, "
@@ -400,10 +427,10 @@ def review_items(limit: int = 12) -> dict[str, Any]:
             "GROUP_CONCAT(DISTINCT o.segment) AS segments "
             "FROM sp_doc_occurrences o "
             "JOIN sp_index i ON i.sp_key = o.sp_key "
-            "GROUP BY i.sp_key "
+            "WHERE (? IS NULL OR o.bank=?) GROUP BY i.sp_key "
             "HAVING COUNT(DISTINCT o.tsd_filename) > 1 "
             "ORDER BY document_count DESC, i.sp_name LIMIT ?",
-            (limit,),
+            (bank, bank, limit),
         ).fetchall())
 
         return {
@@ -422,25 +449,25 @@ def review_items(limit: int = 12) -> dict[str, Any]:
         con.close()
 
 
-def spec_tables(segment: str) -> list[dict[str, Any]]:
+def spec_tables(segment: str, bank: str = "SCB") -> list[dict[str, Any]]:
     con = connect()
     try:
         tables = rows_to_dicts(con.execute(
             "SELECT category, table_name, field_count FROM spec_tables "
-            "WHERE segment = ? ORDER BY category, table_name", (segment,)
+            "WHERE bank = ? AND segment = ? ORDER BY category, table_name", (bank, segment)
         ).fetchall())
         for t in tables:
             t["fields"] = rows_to_dicts(con.execute(
                 "SELECT field, data_type, description FROM spec_fields "
-                "WHERE segment = ? AND category = ? AND table_name = ?",
-                (segment, t["category"], t["table_name"])
+                "WHERE bank = ? AND segment = ? AND category = ? AND table_name = ?",
+                (bank, segment, t["category"], t["table_name"])
             ).fetchall())
         return tables
     finally:
         con.close()
 
 
-def table_lineage(table_name: str) -> dict[str, Any]:
+def table_lineage(table_name: str, bank: str = "SCB") -> dict[str, Any]:
     """SP mana yang membaca dan menulis sebuah tabel."""
     con = connect()
     try:
@@ -448,8 +475,8 @@ def table_lineage(table_name: str) -> dict[str, Any]:
             "SELECT t.role, t.operations, i.sp_name, i.segment, i.status "
             "FROM sp_tables t JOIN sp_index i ON i.sp_key = t.sp_key "
             "WHERE LOWER(t.table_name) LIKE '%' || LOWER(?) || '%' "
-            "  AND i.variant IS NULL "
-            "ORDER BY t.role, i.sp_name LIMIT 200", (table_name,)
+            "  AND i.variant IS NULL AND i.bank = ? "
+            "ORDER BY t.role, i.sp_name LIMIT 200", (table_name, bank)
         ).fetchall())
         return {
             "table": table_name,

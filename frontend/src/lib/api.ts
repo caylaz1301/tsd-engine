@@ -182,11 +182,34 @@ export type DocumentEditorConfig = Record<string, unknown> & {
 	document: { title: string }
 }
 
-export type UploadDocumentResult = {
+export type SqlSource = {
 	filename: string
+	bank: string
+	size_bytes: number
+	modified_at: number
+	database: string | null
+	encoding: string | null
+	procedure_count: number
+	status: "active" | "error"
+}
+
+export type SqlUploadResult = {
+	filename: string
+	bank: string
+	encoding: string | null
+	database: string | null
+	procedure_count: number
+	primary_procedure_count: number
+	archive_copy_count: number
+}
+
+export type TsdUploadResult = {
+	filename: string
+	bank: string
 	segment: string
 	procedure_count: number
 	warning_count: number
+	status: "active"
 }
 
 export type QualityCheck = {
@@ -215,10 +238,10 @@ export type QualityReport = {
 	checks: QualityCheck[]
 }
 
-export async function checkDocument(file: File): Promise<QualityReport> {
+export async function checkDocument(file: File, bank: string): Promise<QualityReport> {
 	let res: Response
 	try {
-		res = await fetch(`${API_BASE}/api/documents/check`, {
+		res = await fetch(`${API_BASE}/api/documents/check?${new URLSearchParams({ bank })}`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -236,9 +259,31 @@ export async function checkDocument(file: File): Promise<QualityReport> {
 	return (await res.json()) as QualityReport
 }
 
-export async function getQualityReports(): Promise<QualityReport[]> {
-	const response = await getJson<{ reports: QualityReport[] }>("/api/documents/checks")
+export async function getQualityReports(bank?: string): Promise<QualityReport[]> {
+	const params = bank ? `?${new URLSearchParams({ bank })}` : ""
+	const response = await getJson<{ reports: QualityReport[] }>(`/api/documents/checks${params}`)
 	return response.reports
+}
+
+export async function uploadTsdSource(file: File, bank: string, replace = false): Promise<TsdUploadResult> {
+	let response: Response
+	try {
+		response = await fetch(`${API_BASE}/api/documents/upload?${new URLSearchParams({ bank, replace: String(replace) })}`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+				"X-File-Name": file.name,
+			},
+			body: file,
+		})
+	} catch {
+		throw new ApiDownError("Backend tidak dapat dihubungi untuk mengunggah dokumen TSD.")
+	}
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { detail?: string } | null
+		throw new Error(payload?.detail ?? `Unggah TSD gagal (${response.status}).`)
+	}
+	return response.json() as Promise<TsdUploadResult>
 }
 
 export async function activateDocument(reportId: string, bank: string, replace = false): Promise<QualityReport> {
@@ -290,12 +335,13 @@ export type AiAnalysisResponse = {
 
 export async function analyzeSp(
 	name: string,
+	bank = "SCB",
 	refresh = false,
 ): Promise<AiAnalysisResponse> {
 	let res: Response
 	try {
 		res = await fetch(
-			`${DIRECT_BROWSER_API_BASE}/api/sp/${encodeURIComponent(name)}/analysis?refresh=${refresh}`,
+			`${DIRECT_BROWSER_API_BASE}/api/sp/${encodeURIComponent(name)}/analysis?${new URLSearchParams({ bank, refresh: String(refresh) })}`,
 			{ method: "POST" },
 		)
 	} catch {
@@ -306,36 +352,6 @@ export async function analyzeSp(
 		throw new Error(payload?.detail ?? `Analisis gagal dengan status ${res.status}.`)
 	}
 	return (await res.json()) as AiAnalysisResponse
-}
-
-export async function uploadDocument(
-	file: File,
-	replace = false,
-): Promise<UploadDocumentResult> {
-	let res: Response
-	try {
-		res = await fetch(
-			`${API_BASE}/api/documents/upload?replace=${replace ? "true" : "false"}`,
-			{
-				method: "POST",
-				headers: {
-					"Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-					"X-File-Name": file.name,
-				},
-				body: file,
-			},
-		)
-	} catch {
-		throw new ApiDownError(
-			`Tidak bisa menghubungi backend di ${API_BASE}. Pastikan layanan Docker berjalan.`,
-		)
-	}
-
-	if (!res.ok) {
-		const payload = (await res.json().catch(() => null)) as { detail?: string } | null
-		throw new Error(payload?.detail ?? `Unggah gagal dengan status ${res.status}.`)
-	}
-	return (await res.json()) as UploadDocumentResult
 }
 
 export type TableLineage = {
@@ -379,8 +395,9 @@ export function imageUrl(path: string): string {
 	return `${PUBLIC_API_BASE}/images/${path}`
 }
 
-export async function getStats(): Promise<Stats> {
-	return getJson<Stats>("/api/stats")
+export async function getStats(bank?: string): Promise<Stats> {
+	const params = bank ? `?${new URLSearchParams({ bank })}` : ""
+	return getJson<Stats>(`/api/stats${params}`)
 }
 
 export type SearchOptions = {
@@ -407,9 +424,9 @@ export async function search(opts: SearchOptions): Promise<SearchResponse> {
 }
 
 /** Mengembalikan null kalau SP tidak ada di indeks, bukan melempar galat. */
-export async function getSp(name: string): Promise<SpDetail | null> {
+export async function getSp(name: string, bank = "SCB"): Promise<SpDetail | null> {
 	let res: Response
-	const url = `${API_BASE}/api/sp/${encodeURIComponent(name)}`
+	const url = `${API_BASE}/api/sp/${encodeURIComponent(name)}?${new URLSearchParams({ bank })}`
 	try {
 		res = await fetch(url, { cache: "no-store" })
 	} catch {
@@ -427,15 +444,17 @@ export async function getSp(name: string): Promise<SpDetail | null> {
 	return (await res.json()) as SpDetail
 }
 
-export async function getSegments(): Promise<SegmentSummary[]> {
+export async function getSegments(bank?: string): Promise<SegmentSummary[]> {
+	const params = bank ? `?${new URLSearchParams({ bank })}` : ""
 	const res = await getJson<SegmentSummary[] | { segments: SegmentSummary[] }>(
-		"/api/segments",
+		`/api/segments${params}`,
 	)
 	return Array.isArray(res) ? res : res.segments
 }
 
-export async function getModules(): Promise<ModuleSummary[]> {
-	const res = await getJson<{ modules: ModuleSummary[] }>("/api/modules")
+export async function getModules(bank?: string): Promise<ModuleSummary[]> {
+	const params = bank ? `?${new URLSearchParams({ bank })}` : ""
+	const res = await getJson<{ modules: ModuleSummary[] }>(`/api/modules${params}`)
 	return res.modules
 }
 
@@ -444,29 +463,30 @@ export async function getBanks(): Promise<string[]> {
 	return res.banks
 }
 
-export async function getDocumentPreview(filename: string, offset = 0, limit = 80): Promise<DocumentPreview> {
-	return getJson<DocumentPreview>(`/api/documents/${encodeURIComponent(filename)}/preview?offset=${offset}&limit=${limit}`)
+export async function getDocumentPreview(filename: string, bank = "SCB", offset = 0, limit = 80): Promise<DocumentPreview> {
+	return getJson<DocumentPreview>(`/api/documents/${encodeURIComponent(filename)}/preview?${new URLSearchParams({ bank, offset: String(offset), limit: String(limit) })}`)
 }
 
-export async function getDocumentEditorConfig(filename: string): Promise<DocumentEditorConfig> {
-	return getJson<DocumentEditorConfig>(`/api/documents/${encodeURIComponent(filename)}/editor-config`)
+export async function getDocumentEditorConfig(filename: string, bank = "SCB"): Promise<DocumentEditorConfig> {
+	return getJson<DocumentEditorConfig>(`/api/documents/${encodeURIComponent(filename)}/editor-config?${new URLSearchParams({ bank })}`)
 }
 
-export function documentDownloadUrl(filename: string, version?: string | number | null): string {
-	const suffix = version ? `?v=${encodeURIComponent(String(version))}` : ""
-	return `${PUBLIC_API_BASE}/api/documents/${encodeURIComponent(filename)}/download${suffix}`
+export function documentDownloadUrl(filename: string, bank = "SCB", version?: string | number | null): string {
+	const params = new URLSearchParams({ bank })
+	if (version) params.set("v", String(version))
+	return `${PUBLIC_API_BASE}/api/documents/${encodeURIComponent(filename)}/download?${params}`
 }
 
-export function documentPdfUrl(filename: string, download = false): string {
-	return `${PUBLIC_API_BASE}/api/documents/${encodeURIComponent(filename)}/pdf${download ? "?download=true" : ""}`
+export function documentPdfUrl(filename: string, bank = "SCB", download = false): string {
+	return `${PUBLIC_API_BASE}/api/documents/${encodeURIComponent(filename)}/pdf?${new URLSearchParams({ bank, download: String(download) })}`
 }
 
 export function matrixDownloadUrl(): string {
 	return `${PUBLIC_API_BASE}/api/exports/matrix.xlsx`
 }
 
-export function spReportUrl(name: string): string {
-	return `${PUBLIC_API_BASE}/api/sp/${encodeURIComponent(name)}/report.pdf`
+export function spReportUrl(name: string, bank = "SCB"): string {
+	return `${PUBLIC_API_BASE}/api/sp/${encodeURIComponent(name)}/report.pdf?${new URLSearchParams({ bank })}`
 }
 
 export async function updateDocumentMetadata(filename: string, newFilename: string, module: string, bank: string, tags: string[]) {
@@ -482,12 +502,12 @@ export async function updateDocumentMetadata(filename: string, newFilename: stri
 	return response.json() as Promise<{ filename: string; module: string; bank: string; tags: string[] }>
 }
 
-async function documentMutation(filename: string, action: "activate" | "deactivate" | "delete") {
+async function documentMutation(filename: string, bank: string, action: "activate" | "deactivate" | "delete") {
 	const suffix = action === "delete" ? "" : `/${action}`
 	const method = action === "delete" ? "DELETE" : "POST"
 	let response: Response
 	try {
-		response = await fetch(`${API_BASE}/api/documents/${encodeURIComponent(filename)}${suffix}`, { method })
+		response = await fetch(`${API_BASE}/api/documents/${encodeURIComponent(filename)}${suffix}?${new URLSearchParams({ bank })}`, { method })
 	} catch {
 		throw new ApiDownError("Backend tidak dapat dihubungi untuk mengelola dokumen.")
 	}
@@ -498,16 +518,49 @@ async function documentMutation(filename: string, action: "activate" | "deactiva
 	return response.json()
 }
 
-export const deactivateTsd = (filename: string) => documentMutation(filename, "deactivate")
-export const reactivateTsd = (filename: string) => documentMutation(filename, "activate")
-export const deleteTsd = (filename: string) => documentMutation(filename, "delete")
+export const deactivateTsd = (filename: string, bank = "SCB") => documentMutation(filename, bank, "deactivate")
+export const reactivateTsd = (filename: string, bank = "SCB") => documentMutation(filename, bank, "activate")
+export const deleteTsd = (filename: string, bank = "SCB") => documentMutation(filename, bank, "delete")
 
-export async function getReview(limit = 12): Promise<ReviewResponse> {
-	return getJson<ReviewResponse>(`/api/review?limit=${limit}`)
+export async function getReview(limit = 12, bank?: string): Promise<ReviewResponse> {
+	const params = new URLSearchParams({ limit: String(limit) })
+	if (bank) params.set("bank", bank)
+	return getJson<ReviewResponse>(`/api/review?${params}`)
 }
 
-export async function getTable(name: string): Promise<TableLineage> {
-	return getJson<TableLineage>(`/api/tables/${encodeURIComponent(name)}`)
+export async function getTable(name: string, bank = "SCB"): Promise<TableLineage> {
+	return getJson<TableLineage>(`/api/tables/${encodeURIComponent(name)}?${new URLSearchParams({ bank })}`)
+}
+
+export async function getSqlSources(bank: string): Promise<SqlSource[]> {
+	const response = await getJson<{ sources: SqlSource[] }>(`/api/sql-sources?${new URLSearchParams({ bank })}`)
+	return response.sources
+}
+
+export async function uploadSqlSource(file: File, bank: string, replace = false): Promise<SqlUploadResult> {
+	let response: Response
+	try {
+		response = await fetch(`${API_BASE}/api/sql-sources/upload?${new URLSearchParams({ bank, replace: String(replace) })}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/sql", "X-File-Name": file.name },
+			body: file,
+		})
+	} catch {
+		throw new ApiDownError("Backend tidak dapat dihubungi untuk mengunggah skrip SQL.")
+	}
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { detail?: string } | null
+		throw new Error(payload?.detail ?? `Unggah SQL gagal (${response.status}).`)
+	}
+	return response.json() as Promise<SqlUploadResult>
+}
+
+export async function deleteSqlSource(filename: string, bank: string): Promise<void> {
+	const response = await fetch(`${API_BASE}/api/sql-sources/${encodeURIComponent(filename)}?${new URLSearchParams({ bank })}`, { method: "DELETE" })
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { detail?: string } | null
+		throw new Error(payload?.detail ?? `Skrip SQL gagal dihapus (${response.status}).`)
+	}
 }
 
 /** Parameter SP disimpan sebagai string JSON di SQLite. */

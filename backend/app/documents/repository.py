@@ -19,6 +19,7 @@ from app.indexer.ingest import PARSED_DIR, SAMPLES_DIR, validate_docx, validate_
 from app.parsers import docx_parser
 from app.modules import infer_module
 from app.banks import UNKNOWN_BANK, bank_options, detect_bank, normalize_bank
+from app.source_paths import paths_for
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -31,14 +32,14 @@ _lock = threading.Lock()
 _pdf_lock = threading.Lock()
 
 
-def _detected_module(item: dict[str, Any]) -> str:
+def _detected_module(item: dict[str, Any], bank: str = "SCB") -> str:
     """Deteksi modul dari identitas dokumen dan isi hasil parser."""
     filename = item.get("tsd_filename") or item.get("filename") or ""
     segment = item.get("segment") or ""
     identity_module = infer_module(segment, filename)
     if identity_module != "LAINNYA":
         return identity_module
-    parsed_path = PARSED_ROOT / f"{Path(filename).stem}.json"
+    parsed_path = paths_for(bank).parsed_documents / f"{Path(filename).stem}.json"
     content: list[str] = []
     try:
         parsed = json.loads(parsed_path.read_text(encoding="utf-8"))
@@ -68,35 +69,48 @@ def _detected_bank(filename: str, path: Path | None = None) -> str:
     return str(detect_bank(filename, text)["suggestion"])
 
 
-def _read_registry() -> dict[str, Any]:
-    if not REGISTRY_PATH.exists():
+def _scope_image_paths(parsed: dict[str, Any], bank: str) -> None:
+    if bank == "SCB":
+        return
+    for procedure in parsed.get("procedures", []):
+        for block_name in ("data_model", "data_flow"):
+            for image in (procedure.get(block_name) or {}).get("images", []):
+                if not image["path"].startswith(f"{bank}/"):
+                    image["path"] = f"{bank}/{image['path']}"
+
+
+def _read_registry(bank: str = "SCB") -> dict[str, Any]:
+    registry_path = paths_for(bank).registry
+    if not registry_path.exists():
         return {"documents": {}}
     try:
-        return json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+        return json.loads(registry_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {"documents": {}}
 
 
-def _write_registry(registry: dict[str, Any]) -> None:
-    REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    temp = REGISTRY_PATH.with_suffix(".tmp")
+def _write_registry(registry: dict[str, Any], bank: str = "SCB") -> None:
+    registry_path = paths_for(bank).registry
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    temp = registry_path.with_suffix(".tmp")
     temp.write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
-    temp.replace(REGISTRY_PATH)
+    temp.replace(registry_path)
 
 
-def _resolve(filename: str, *, allow_inactive: bool = True) -> tuple[Path, str]:
+def _resolve(filename: str, bank: str = "SCB", *, allow_inactive: bool = True) -> tuple[Path, str]:
     name = validate_filename(filename)
-    active = ACTIVE_DIR / name
+    paths = paths_for(bank).ensure()
+    active = paths.documents / name
     if active.is_file():
         return active, "active"
-    inactive = INACTIVE_DIR / name
+    inactive = paths.inactive_documents / name
     if allow_inactive and inactive.is_file():
         return inactive, "inactive"
     raise FileNotFoundError("Dokumen TSD tidak ditemukan.")
 
 
-def document_path(filename: str) -> tuple[Path, str]:
-    path, status = _resolve(filename)
+def document_path(filename: str, bank: str = "SCB") -> tuple[Path, str]:
+    path, status = _resolve(filename, bank)
     validate_docx(path)
     return path, status
 
@@ -105,18 +119,19 @@ class PdfConverterUnavailableError(RuntimeError):
     pass
 
 
-def pdf_path(filename: str) -> Path:
+def pdf_path(filename: str, bank: str = "SCB") -> Path:
     """Konversi DOCX ke PDF visual dan cache sampai file sumber berubah."""
-    source, _ = document_path(filename)
+    source, _ = document_path(filename, bank)
+    pdf_dir = paths_for(bank).ensure().pdf
     executable = shutil.which("soffice") or shutil.which("libreoffice")
     if executable is None:
         raise PdfConverterUnavailableError(
             "Preview visual memerlukan LibreOffice. Instal dengan: brew install --cask libreoffice"
         )
-    PDF_DIR.mkdir(parents=True, exist_ok=True)
+    pdf_dir.mkdir(parents=True, exist_ok=True)
     # Versi cache ikut berubah saat konfigurasi font/converter diperbarui.
     digest = hashlib.sha256(f"pdf-v2:{source.name}".encode()).hexdigest()[:16]
-    destination = PDF_DIR / f"{digest}.pdf"
+    destination = pdf_dir / f"{digest}.pdf"
     with _pdf_lock:
         if destination.exists() and destination.stat().st_mtime >= source.stat().st_mtime:
             return destination
@@ -146,7 +161,7 @@ def pdf_path(filename: str) -> Path:
                 raise RuntimeError(f"Konversi PDF gagal. {detail}".strip())
             # /tmp dan volume storage adalah mount berbeda di Docker. Salin dulu ke
             # file sementara pada volume tujuan, lalu rename atomik di mount yang sama.
-            with tempfile.NamedTemporaryFile(dir=PDF_DIR, suffix=".pdf.tmp", delete=False) as output:
+            with tempfile.NamedTemporaryFile(dir=pdf_dir, suffix=".pdf.tmp", delete=False) as output:
                 staged = Path(output.name)
             try:
                 shutil.copyfile(converted, staged)
@@ -156,8 +171,8 @@ def pdf_path(filename: str) -> Path:
     return destination
 
 
-def preview(filename: str, offset: int = 0, limit: int = 80) -> dict[str, Any]:
-    path, status = document_path(filename)
+def preview(filename: str, bank: str = "SCB", offset: int = 0, limit: int = 80) -> dict[str, Any]:
+    path, status = document_path(filename, bank)
     document = Document(path)
     blocks: list[dict[str, Any]] = []
     for paragraph in document.paragraphs:
@@ -172,7 +187,7 @@ def preview(filename: str, offset: int = 0, limit: int = 80) -> dict[str, Any]:
         if rows:
             blocks.append({"type": "table", "rows": rows[:100]})
     props = document.core_properties
-    registry = _read_registry().get("documents", {}).get(path.name, {})
+    registry = _read_registry(bank).get("documents", {}).get(path.name, {})
     segment = registry.get("segment") or path.stem
     total_blocks = len(blocks)
     return {
@@ -180,7 +195,7 @@ def preview(filename: str, offset: int = 0, limit: int = 80) -> dict[str, Any]:
         "status": status,
         "segment": segment,
         "module": registry.get("module") or infer_module(segment),
-        "bank": registry.get("bank") or UNKNOWN_BANK,
+        "bank": bank,
         "size_bytes": path.stat().st_size,
         "modified_at": path.stat().st_mtime,
         "title": props.title or None,
@@ -193,45 +208,36 @@ def preview(filename: str, offset: int = 0, limit: int = 80) -> dict[str, Any]:
 
 
 def sync_registry(documents: list[dict[str, Any]]) -> None:
-    registry = _read_registry()
-    records = registry.setdefault("documents", {})
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    bank_index_changed = False
-    for item in documents:
-        record = records.setdefault(item["tsd_filename"], {})
-        detected = _detected_module(item)
-        if not record.get("bank_source") or not record.get("bank") or (
-            record.get("bank_source") == "automatic"
-            and record.get("bank_detection_version") != 2
-        ):
-            previous_bank = record.get("bank")
-            detected_bank = _detected_bank(item["tsd_filename"])
-            record["bank"] = detected_bank
-            record["bank_source"] = "automatic"
-            record["bank_detection_version"] = 2
-            bank_index_changed = bank_index_changed or previous_bank != detected_bank
-        current = record.get("module")
-        record.update({
-            "status": "active",
-            "segment": item.get("segment"),
-            "module": detected if not current or current == "LAINNYA" else current,
-            "bank": record.get("bank") or UNKNOWN_BANK,
-            "updated_at": record.get("updated_at") or now,
-            "procedure_count": item.get("procedure_count"),
-        })
-    _write_registry(registry)
-    if bank_index_changed:
-        build_index.build()
+    with _lock:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        for bank in bank_options():
+            registry = _read_registry(bank)
+            records = registry.setdefault("documents", {})
+            for item in (row for row in documents if row.get("bank") == bank):
+                record = records.setdefault(item["tsd_filename"], {})
+                detected = _detected_module(item, bank)
+                current = record.get("module")
+                record.update({
+                    "status": "active",
+                    "segment": item.get("segment"),
+                    "module": detected if not current or current == "LAINNYA" else current,
+                    "bank": bank,
+                    "bank_source": "selected_on_upload",
+                    "updated_at": record.get("updated_at") or now,
+                    "procedure_count": item.get("procedure_count"),
+                })
+            _write_registry(registry, bank)
 
 
 def enrich_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    registry = _read_registry().get("documents", {})
     enriched = []
     for item in documents:
         row = dict(item)
+        bank = row.get("bank") or "SCB"
+        registry = _read_registry(bank).get("documents", {})
         record = registry.get(row["tsd_filename"], {})
-        row["module"] = record.get("module") or _detected_module(row)
-        row["bank"] = record.get("bank") or UNKNOWN_BANK
+        row["module"] = record.get("module") or _detected_module(row, bank)
+        row["bank"] = bank
         row["tags"] = record.get("tags", [])
         row["updated_at"] = record.get("updated_at")
         enriched.append(row)
@@ -243,9 +249,10 @@ def update_metadata(
 ) -> dict[str, Any]:
     name = validate_filename(filename)
     renamed = validate_filename(new_filename.strip())
-    source, status = _resolve(name)
-    clean_module = module.strip().upper()
     clean_bank = normalize_bank(bank)
+    paths = paths_for(clean_bank).ensure()
+    source, status = _resolve(name, clean_bank)
+    clean_module = module.strip().upper()
     if not clean_module or len(clean_module) > 40:
         raise ValueError("Modul wajib diisi dan maksimal 40 karakter.")
     clean_tags = list(dict.fromkeys(tag.strip() for tag in tags if tag.strip()))
@@ -253,13 +260,13 @@ def update_metadata(
         raise ValueError("Maksimal 10 tag, masing-masing 30 karakter.")
     with _lock:
         destination = source.with_name(renamed)
-        if renamed != name and ((ACTIVE_DIR / renamed).exists() or (INACTIVE_DIR / renamed).exists()):
+        if renamed != name and ((paths.documents / renamed).exists() or (paths.inactive_documents / renamed).exists()):
             raise FileExistsError("Dokumen dengan nama file tersebut sudah ada.")
 
-        old_parsed = PARSED_ROOT / f"{Path(name).stem}.json"
+        old_parsed = paths.parsed_documents / f"{Path(name).stem}.json"
         old_parsed_hold = PARSED_ROOT / f"{Path(name).stem}.json.inactive"
         old_parsed_source = old_parsed if status == "active" else old_parsed_hold
-        new_parsed = PARSED_ROOT / f"{Path(renamed).stem}.json"
+        new_parsed = paths.parsed_documents / f"{Path(renamed).stem}.json"
         new_parsed_hold = PARSED_ROOT / f"{Path(renamed).stem}.json.inactive"
         parsed_destination = new_parsed if status == "active" else new_parsed_hold
         parsed_backup = old_parsed_source.with_name(f".{old_parsed_source.name}.rename-backup")
@@ -271,7 +278,8 @@ def update_metadata(
                 old_parsed_source.replace(parsed_backup)
             try:
                 if status == "active":
-                    parsed = docx_parser.parse(destination, BASE_DIR / "storage" / "images")
+                    parsed = docx_parser.parse(destination, paths.images)
+                    _scope_image_paths(parsed, clean_bank)
                     new_parsed.write_text(
                         json.dumps(parsed, indent=2, ensure_ascii=False), encoding="utf-8"
                     )
@@ -287,7 +295,7 @@ def update_metadata(
                 raise
             parsed_backup.unlink(missing_ok=True)
 
-        registry = _read_registry()
+        registry = _read_registry(clean_bank)
         records = registry.setdefault("documents", {})
         record = records.pop(name, {}) if renamed != name else records.setdefault(name, {})
         record.update({
@@ -299,37 +307,37 @@ def update_metadata(
             "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         })
         records[renamed] = record
-        _write_registry(registry)
+        _write_registry(registry, clean_bank)
         if status == "active":
             build_index.build()
     return {"filename": renamed, "module": clean_module, "bank": clean_bank, "tags": clean_tags}
 
 
-def set_bank(filename: str, bank: str) -> str:
+def set_bank(filename: str, bank: str, rebuild: bool = True) -> str:
     name = validate_filename(filename)
     clean_bank = normalize_bank(bank)
     with _lock:
-        registry = _read_registry()
+        registry = _read_registry(clean_bank)
         record = registry.setdefault("documents", {}).setdefault(name, {})
         record.update({"bank": clean_bank, "bank_source": "manual", "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
-        _write_registry(registry)
-        build_index.build()
+        _write_registry(registry, clean_bank)
+        if rebuild:
+            build_index.build()
     return clean_bank
 
 
 def list_banks() -> list[str]:
-    registry = _read_registry().get("documents", {})
-    return bank_options([record.get("bank", "") for record in registry.values()])
+    return bank_options()
 
 
-def inactive_documents() -> list[dict[str, Any]]:
-    INACTIVE_DIR.mkdir(parents=True, exist_ok=True)
-    registry = _read_registry().get("documents", {})
+def inactive_documents(bank: str = "SCB") -> list[dict[str, Any]]:
+    paths = paths_for(bank).ensure()
+    registry = _read_registry(bank).get("documents", {})
     rows = []
-    for path in sorted(INACTIVE_DIR.glob("*.docx")):
+    for path in sorted(paths.inactive_documents.glob("*.docx")):
         record = registry.get(path.name, {})
         segment = record.get("segment") or path.stem
-        detected = _detected_module({"tsd_filename": path.name, "segment": segment})
+        detected = _detected_module({"tsd_filename": path.name, "segment": segment}, bank)
         module = record.get("module")
         if not module or module == "LAINNYA":
             module = detected
@@ -337,7 +345,7 @@ def inactive_documents() -> list[dict[str, Any]]:
             "tsd_filename": path.name,
             "segment": segment,
             "module": module,
-            "bank": record.get("bank") or _detected_bank(path.name, path),
+            "bank": bank,
             "status": "inactive",
             "procedure_count": record.get("procedure_count"),
             "indexed_sp": 0,
@@ -348,16 +356,16 @@ def inactive_documents() -> list[dict[str, Any]]:
     return rows
 
 
-def set_inactive(filename: str) -> dict[str, Any]:
+def set_inactive(filename: str, bank: str = "SCB") -> dict[str, Any]:
     name = validate_filename(filename)
-    source, status = _resolve(name, allow_inactive=False)
+    paths = paths_for(bank).ensure()
+    source, status = _resolve(name, bank, allow_inactive=False)
     if status != "active":
         raise ValueError("Dokumen sudah nonaktif.")
-    INACTIVE_DIR.mkdir(parents=True, exist_ok=True)
-    destination = INACTIVE_DIR / name
+    destination = paths.inactive_documents / name
     if destination.exists():
         raise FileExistsError("Versi nonaktif dengan nama yang sama sudah ada.")
-    parsed = PARSED_ROOT / f"{Path(name).stem}.json"
+    parsed = paths.parsed_documents / f"{Path(name).stem}.json"
     parsed_hold = parsed.with_suffix(".json.inactive")
     with _lock:
         shutil.move(str(source), destination)
@@ -370,23 +378,24 @@ def set_inactive(filename: str) -> dict[str, Any]:
             if parsed_hold.exists():
                 parsed_hold.replace(parsed)
             raise
-        registry = _read_registry()
+        registry = _read_registry(bank)
         record = registry.setdefault("documents", {}).setdefault(name, {})
         record.update({"status": "inactive", "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
-        _write_registry(registry)
+        _write_registry(registry, bank)
     return {"filename": name, "status": "inactive"}
 
 
-def reactivate(filename: str) -> dict[str, Any]:
+def reactivate(filename: str, bank: str = "SCB") -> dict[str, Any]:
     name = validate_filename(filename)
-    source, status = _resolve(name)
+    paths = paths_for(bank).ensure()
+    source, status = _resolve(name, bank)
     if status != "inactive":
         raise ValueError("Dokumen sudah aktif.")
-    destination = ACTIVE_DIR / name
+    destination = paths.documents / name
     if destination.exists():
         raise FileExistsError("Dokumen aktif dengan nama yang sama sudah ada.")
-    parsed_hold = PARSED_ROOT / f"{Path(name).stem}.json.inactive"
-    parsed = PARSED_ROOT / f"{Path(name).stem}.json"
+    parsed_hold = paths.parsed_documents / f"{Path(name).stem}.json.inactive"
+    parsed = paths.parsed_documents / f"{Path(name).stem}.json"
     with _lock:
         shutil.move(str(source), destination)
         if parsed_hold.exists():
@@ -398,19 +407,20 @@ def reactivate(filename: str) -> dict[str, Any]:
             if parsed.exists():
                 parsed.replace(parsed_hold)
             raise
-        registry = _read_registry()
+        registry = _read_registry(bank)
         record = registry.setdefault("documents", {}).setdefault(name, {})
         record.update({"status": "active", "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
-        _write_registry(registry)
+        _write_registry(registry, bank)
     return {"filename": name, "status": "active"}
 
 
-def delete(filename: str) -> dict[str, Any]:
+def delete(filename: str, bank: str = "SCB") -> dict[str, Any]:
     name = validate_filename(filename)
-    source, status = _resolve(name)
+    paths = paths_for(bank).ensure()
+    source, status = _resolve(name, bank)
     trash = source.with_name(f".{source.name}.deleting")
-    parsed = PARSED_ROOT / f"{Path(name).stem}.json"
-    parsed_hold = PARSED_ROOT / f"{Path(name).stem}.json.inactive"
+    parsed = paths.parsed_documents / f"{Path(name).stem}.json"
+    parsed_hold = paths.parsed_documents / f"{Path(name).stem}.json.inactive"
     parsed_source = parsed if parsed.exists() else parsed_hold
     parsed_trash = parsed_source.with_name(f".{parsed_source.name}.deleting")
     with _lock:
@@ -427,21 +437,22 @@ def delete(filename: str) -> dict[str, Any]:
             raise
         trash.unlink(missing_ok=True)
         parsed_trash.unlink(missing_ok=True)
-        registry = _read_registry()
+        registry = _read_registry(bank)
         registry.setdefault("documents", {}).pop(name, None)
-        _write_registry(registry)
+        _write_registry(registry, bank)
     return {"filename": name, "status": "deleted"}
 
 
-def replace_from_editor(filename: str, temp_path: Path) -> dict[str, Any]:
+def replace_from_editor(filename: str, temp_path: Path, bank: str = "SCB") -> dict[str, Any]:
     """Ganti DOCX aktif dari editor, lalu parse dan bangun ulang indeks."""
     name = validate_filename(filename)
-    source, status = _resolve(name, allow_inactive=False)
+    paths = paths_for(bank).ensure()
+    source, status = _resolve(name, bank, allow_inactive=False)
     if status != "active":
         raise ValueError("Hanya dokumen aktif yang dapat diedit.")
     validate_docx(temp_path)
     backup = source.with_name(f".{source.name}.editor-backup")
-    parsed_path = PARSED_ROOT / f"{source.stem}.json"
+    parsed_path = paths.parsed_documents / f"{source.stem}.json"
     parsed_backup = parsed_path.with_name(f".{parsed_path.name}.editor-backup")
     with _lock:
         backup.unlink(missing_ok=True)
@@ -451,7 +462,8 @@ def replace_from_editor(filename: str, temp_path: Path) -> dict[str, Any]:
             parsed_path.replace(parsed_backup)
         try:
             temp_path.replace(source)
-            parsed = docx_parser.parse(source, BASE_DIR / "storage" / "images")
+            parsed = docx_parser.parse(source, paths.images)
+            _scope_image_paths(parsed, bank)
             parsed_path.write_text(
                 json.dumps(parsed, indent=2, ensure_ascii=False), encoding="utf-8"
             )
@@ -465,15 +477,15 @@ def replace_from_editor(filename: str, temp_path: Path) -> dict[str, Any]:
             raise
         backup.unlink(missing_ok=True)
         parsed_backup.unlink(missing_ok=True)
-        PDF_DIR.mkdir(parents=True, exist_ok=True)
-        for cached_pdf in PDF_DIR.glob("*.pdf"):
+        paths.pdf.mkdir(parents=True, exist_ok=True)
+        for cached_pdf in paths.pdf.glob("*.pdf"):
             cached_pdf.unlink(missing_ok=True)
-        registry = _read_registry()
+        registry = _read_registry(bank)
         record = registry.setdefault("documents", {}).setdefault(name, {})
         record.update({
             "status": "active",
             "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "procedure_count": parsed.get("procedure_count"),
         })
-        _write_registry(registry)
+        _write_registry(registry, bank)
     return {"filename": name, "status": "active", "reindexed": True}

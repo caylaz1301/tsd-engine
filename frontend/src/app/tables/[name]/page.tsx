@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { getTable, type TableLineage } from "@/lib/api"
 import { num, splitTableName } from "@/lib/utils"
+import { getSelectedBank } from "@/lib/bank-context"
 import {
 	EmptyState,
 	ErrorPanel,
@@ -71,10 +72,11 @@ export default async function TablePage({
 	const { name } = await params
 	const query = await searchParams
 	const decoded = decodeURIComponent(name)
+	const bank = await getSelectedBank()
 
 	let lineage: TableLineage
 	try {
-		lineage = await getTable(decoded)
+		lineage = await getTable(decoded, bank)
 	} catch (e) {
 		return (
 			<ErrorPanel

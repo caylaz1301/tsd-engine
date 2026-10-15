@@ -295,7 +295,10 @@ def analyze(context: dict[str, Any]) -> AnalysisResult:
         "keep_alive": "10m",
     }
     try:
-        response = _request("POST", "/api/chat", json=payload, timeout=(3, 45)).json()
+        # Cold start model 3B pada CPU dapat melewati 45 detik. Docker/Ollama
+        # tetap sehat selama model dimuat, jadi beri waktu cukup untuk request
+        # pertama; request berikutnya memakai keep_alive dan biasanya lebih cepat.
+        response = _request("POST", "/api/chat", json=payload, timeout=(5, 180)).json()
         content = response["message"]["content"]
         result = AnalysisResult.model_validate_json(content)
         if context.get("sql_definition") and _is_weak(result):

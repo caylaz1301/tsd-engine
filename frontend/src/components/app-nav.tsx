@@ -8,6 +8,7 @@ const ITEMS = [
 	{ href: "/", label: "Ringkasan" },
 	{ href: "/search", label: "Pencarian" },
 	{ href: "/segments", label: "Dokumen TSD" },
+	{ href: "/admin/sources", label: "Kelola sumber" },
 ]
 
 export function AppNav() {

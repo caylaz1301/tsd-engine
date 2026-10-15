@@ -6,6 +6,10 @@ services:
     environment:
       API_INTERNAL_BASE: http://backend:8000
       BACKEND_INTERNAL_URL: http://backend:8000
+      TSD_AUTH_USERNAME: ${TSD_AUTH_USERNAME:-admin}
+      TSD_AUTH_PASSWORD: ${TSD_AUTH_PASSWORD:-admin}
+      TSD_SESSION_SECRET: ${TSD_SESSION_SECRET:-change-this-session-secret}
+      TSD_COOKIE_SECURE: ${TSD_COOKIE_SECURE:-false}
     ports:
       - "${APP_PORT:-3000}:3000"
     depends_on:

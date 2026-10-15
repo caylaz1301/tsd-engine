@@ -10,6 +10,7 @@ backend/storage/inspect/
 backend/storage/parsed/
 backend/storage/documents/
 backend/storage/quality/
+backend/storage/banks/
 backend/samples/*.docx
 backend/samples/*.sql
 node_modules/

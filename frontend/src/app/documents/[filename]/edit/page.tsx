@@ -1,10 +1,20 @@
 import Link from "next/link"
 import { ArrowLeft, ShieldCheck } from "lucide-react"
 import { DocumentEditor } from "@/components/document-editor"
+import { getDocumentPreview } from "@/lib/api"
+import { getSelectedBank } from "@/lib/bank-context"
+import { notFound } from "next/navigation"
 
 export default async function EditDocumentPage({ params }: { params: Promise<{ filename: string }> }) {
 	const { filename } = await params
 	const decoded = decodeURIComponent(filename)
+	const bank = await getSelectedBank()
+	try {
+		const document = await getDocumentPreview(decoded, bank, 0, 20)
+		if (document.bank !== bank) notFound()
+	} catch {
+		notFound()
+	}
 	return (
 		<div className="fixed inset-0 z-50 flex flex-col bg-zinc-100">
 			<header className="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-200 bg-white px-4">
@@ -12,7 +22,7 @@ export default async function EditDocumentPage({ params }: { params: Promise<{ f
 				<div className="min-w-0 flex-1"><h1 className="truncate font-mono text-sm font-semibold text-zinc-950" title={decoded}>{decoded}</h1><p className="text-xs text-zinc-600">Perubahan disimpan ke repository dan indeks diperbarui setelah penyimpanan.</p></div>
 				<span className="hidden items-center gap-1.5 text-xs text-emerald-700 sm:inline-flex"><ShieldCheck className="size-4" />Tersimpan di Docker</span>
 			</header>
-			<DocumentEditor filename={decoded} />
+			<DocumentEditor filename={decoded} bank={bank} />
 		</div>
 	)
 }

@@ -254,7 +254,7 @@ def _spec_pair_findings(
     return findings
 
 
-def check_document(temp_path: Path, filename: str) -> dict[str, Any]:
+def check_document(temp_path: Path, filename: str, bank: str | None = None) -> dict[str, Any]:
     name = validate_filename(filename)
     validate_docx(temp_path)
     document = Document(temp_path)
@@ -378,6 +378,7 @@ def check_document(temp_path: Path, filename: str) -> dict[str, Any]:
     shutil.move(str(temp_path), staged_path)
     report = {
         "id": report_id, "checker_version": CHECKER_VERSION, "filename": name, "segment": parsed.get("segment"),
+        "bank": bank,
         "bank_suggestion": bank_detection["suggestion"],
         "bank_confidence": bank_detection["confidence"],
         "bank_candidates": bank_detection["candidates"],
@@ -422,6 +423,6 @@ def recheck_report(report_id: str) -> dict[str, Any]:
     staged = STAGING_DIR / f"{report_id}.docx"
     if not staged.exists():
         raise FileNotFoundError("File staging sudah tidak tersedia.")
-    refreshed = check_document(staged, report["filename"])
+    refreshed = check_document(staged, report["filename"], report.get("bank"))
     (REPORT_DIR / f"{report_id}.json").unlink(missing_ok=True)
     return refreshed

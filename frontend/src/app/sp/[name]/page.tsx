@@ -9,6 +9,7 @@ import {
 import { num } from "@/lib/utils"
 import { DiagramViewer } from "@/components/diagram-viewer"
 import { SpAnalysis } from "@/components/sp-analysis"
+import { getSelectedBank } from "@/lib/bank-context"
 import {
 	ErrorPanel,
 	KeyValue,
@@ -29,10 +30,11 @@ export default async function SpPage({
 }) {
 	const { name } = await params
 	const decoded = decodeURIComponent(name)
+	const bank = await getSelectedBank()
 
 	let sp: SpDetail | null
 	try {
-		sp = await getSp(decoded)
+		sp = await getSp(decoded, bank)
 	} catch (e) {
 		return (
 			<ErrorPanel
@@ -78,7 +80,7 @@ export default async function SpPage({
 				) : null}
 			</div>
 
-			<SpAnalysis name={sp.sp_name} />
+			<SpAnalysis name={sp.sp_name} bank={bank} />
 
 			<div className="grid gap-8 lg:grid-cols-[340px_minmax(0,1fr)]">
 				{/* ---------------------------------------------- rail metadata */}

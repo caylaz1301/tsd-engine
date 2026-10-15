@@ -1,5 +1,9 @@
 # Arsitektur TSD Engine
 
+Rancangan pengembangan multi-bank dan upload seluruh sumber melalui web ada di
+[`MULTI_BANK_HANDOVER_ARCHITECTURE.md`](MULTI_BANK_HANDOVER_ARCHITECTURE.md).
+Dokumen di bawah menjelaskan arsitektur aplikasi yang sudah berjalan.
+
 Dokumen ini menjelaskan struktur teknis, alur data, penyimpanan, integrasi, dan
 batasan TSD Engine sebagai acuan pengembangan lanjutan oleh perusahaan.
 
@@ -108,7 +112,8 @@ Container bersifat disposable. Data bertahan selama volumes tidak dihapus.
 4. Indexer membangun SQLite FTS5.
 5. Marker `.docker-initialized` mencegah seed berulang saat restart.
 
-Seed hanya untuk bootstrap. Setelah berjalan, sumber dikelola melalui aplikasi.
+Seed hanya untuk bootstrap. Setelah aplikasi berjalan, DOCX dan skrip SQL baru
+dikelola melalui menu **Kelola sumber** sesuai bank yang dipilih di header.
 
 ## 7. Pipeline Parsing dan Index
 
@@ -148,7 +153,8 @@ AI adalah alat bantu. Informasi tanpa bukti tetap ditandai untuk verifikasi.
 
 ## 10. Quality Checker
 
-Upload ditempatkan di staging dan tidak langsung menjadi sumber. Checker meliputi:
+Quality checker adalah alur pemeriksaan opsional di Repository. File pemeriksaan
+ditempatkan di staging dan tidak langsung menjadi sumber. Checker meliputi:
 
 - integritas DOCX, identitas, metadata tanggal, dan change control;
 - sinkronisasi TOC, bab wajib, hierarki dan penomoran Heading 1-6;
@@ -158,6 +164,10 @@ Upload ditempatkan di staging dan tidak langsung menjadi sumber. Checker meliput
 
 Laporan disimpan sebagai JSON. Hanya skor 100% yang dapat diaktifkan. Aktivasi
 memindahkan file ke sumber aktif, menjalankan parser, dan rebuild index.
+
+Upload admin melalui **Kelola sumber** memakai endpoint terpisah. File DOCX valid
+langsung disimpan sebagai sumber aktif, diparse, dan memicu rebuild index tanpa
+menjalankan quality checker.
 
 ## 11. Lifecycle Dokumen
 
@@ -210,8 +220,10 @@ terbaru setelah edit.
 | `GET /api/sp/{name}` | detail stored procedure |
 | `POST /api/sp/{name}/analysis` | analisis AI |
 | `GET /api/segments` | repository dokumen |
+| `POST /api/documents/upload` | upload admin TSD langsung dan rebuild index |
 | `POST /api/documents/check` | quality checker |
 | `POST /api/documents/checks/{id}/activate` | aktivasi hasil lulus |
+| `POST /api/sql-sources/upload` | upload sumber SQL dan rebuild index |
 | `GET /api/documents/{filename}/pdf` | preview/download PDF |
 | `GET /api/documents/{filename}/download` | download DOCX |
 | `PUT /api/documents/{filename}/metadata` | rename, modul, dan tag |
@@ -237,7 +249,7 @@ dan distributed locking.
 Saat ini tersedia validasi nama/ukuran/struktur DOCX, CORS, dan JWT callback
 ONLYOFFICE. Sebelum produksi perusahaan perlu menambah:
 
-- autentikasi, session, dan role-based access control;
+- autentikasi perusahaan dan role-based access control;
 - TLS reverse proxy dan secret manager;
 - audit log perubahan dokumen;
 - antivirus scanning upload;
@@ -256,13 +268,17 @@ Backup harus diuji restore secara berkala.
 
 ## 18. Batasan Saat Ini
 
-- Belum ada login, role, dan audit trail per pengguna.
+- Login lokal satu akun dan sesi bertanda tangan sudah tersedia. Belum ada SSO,
+  role, manajemen banyak pengguna, dan audit trail per pengguna.
 - SQLite dan process lock membatasi satu backend instance.
 - Rebuild index masih sinkron.
 - ONLYOFFICE pada Apple Silicon memakai emulasi `linux/amd64`.
 - Akurasi AI bergantung pada kualitas sumber dan model lokal.
 - Rename/edit bersamaan belum memakai distributed lock.
 - Tidak ada sinkronisasi SharePoint atau cloud provider.
+- SQLite masih berupa satu file indeks bersama. Seluruh record, kueri, dan kunci
+  internal sudah memakai namespace bank; untuk deployment multi-server, metadata
+  sebaiknya dipindahkan ke PostgreSQL dan file sumber ke storage perusahaan.
 
 ## 19. Dokumen Terkait
 

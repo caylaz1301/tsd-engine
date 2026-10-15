@@ -15,7 +15,7 @@ import { StatusBadge } from "@/components/ui"
  * permintaan ke backend. Setiap permintaan membawa nomor urut, dan hasil yang
  * datang terlambat dibuang, karena jawaban lama bisa tiba setelah jawaban baru.
  */
-export function CommandPalette() {
+export function CommandPalette({ selectedBank = "" }: { selectedBank?: string }) {
 	const router = useRouter()
 	const [open, setOpen] = useState(false)
 	const [q, setQ] = useState("")
@@ -70,7 +70,7 @@ export function CommandPalette() {
 		const timer = setTimeout(async () => {
 			setLoading(true)
 			try {
-				const res = await search({ q: term, hideVariants: true, limit: 8 })
+				const res = await search({ q: term, bank: selectedBank || undefined, hideVariants: true, limit: 8 })
 				if (mine !== seq.current) return
 				setRows(res.results)
 				setTotal(res.total)
@@ -85,7 +85,7 @@ export function CommandPalette() {
 			}
 		}, 180)
 		return () => clearTimeout(timer)
-	}, [q])
+	}, [q, selectedBank])
 
 	const go = useCallback(
 		(row: SearchRow | undefined) => {

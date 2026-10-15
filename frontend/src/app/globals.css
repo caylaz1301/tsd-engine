@@ -71,6 +71,10 @@ a {
 	outline: none;
 }
 
+.login-input:focus-visible {
+	outline: none;
+}
+
 .command-palette-overlay {
 	animation: command-overlay-in 140ms ease-out both;
 }

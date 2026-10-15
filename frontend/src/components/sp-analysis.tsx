@@ -4,22 +4,22 @@ import { useEffect, useState } from "react"
 import { BrainCircuit, RotateCcw } from "lucide-react"
 import { analyzeSp, type AiAnalysisResponse } from "@/lib/api"
 
-export function SpAnalysis({ name }: { name: string }) {
+export function SpAnalysis({ name, bank }: { name: string; bank: string }) {
 	const [result, setResult] = useState<AiAnalysisResponse | null>(null)
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 
 	useEffect(() => {
 		void run()
-	// Nama SP adalah satu-satunya pemicu analisis baru.
+	// Nama SP dan bank menentukan sumber analisis.
 	// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [name])
+	}, [name, bank])
 
 	async function run(refresh = false) {
 		setLoading(true)
 		setError(null)
 		try {
-			setResult(await analyzeSp(name, refresh))
+			setResult(await analyzeSp(name, bank, refresh))
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Analisis tidak dapat dibuat.")
 		} finally {
@@ -44,7 +44,7 @@ export function SpAnalysis({ name }: { name: string }) {
 							</div>
 						) : (
 							<div className="mt-3 max-w-3xl space-y-2">
-								<p className="text-sm text-zinc-600">Menyusun ringkasan dari dokumen dan relasi tabel...</p>
+									<p className="text-sm text-zinc-600">Menyusun ringkasan dari dokumen dan relasi tabel. Proses pertama dapat memerlukan sekitar satu menit saat model dimuat...</p>
 								<div className="h-3 w-full max-w-2xl animate-pulse rounded bg-zinc-200" />
 								<div className="h-3 w-3/4 max-w-xl animate-pulse rounded bg-zinc-200" />
 							</div>
